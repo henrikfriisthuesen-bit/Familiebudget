@@ -116,7 +116,12 @@
     headers(){ return { 'Authorization': 'Bearer ' + this.cfg.token, 'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' }; },
     async fetchRemote(){
       const r = await fetch(this.url() + '?ref=' + encodeURIComponent(this.cfg.branch) + '&t=' + Date.now(), { headers: this.headers(), cache: 'no-store' });
-      if (r.status === 404) return { sha: null, docs: {} };
+      if (r.status === 404){
+        const rr = await fetch(`https://api.github.com/repos/${encodeURIComponent(this.cfg.owner)}/${encodeURIComponent(this.cfg.repo)}`, { headers: this.headers(), cache: 'no-store' });
+        if (rr.status === 404) throw new Error(`Kan ikke finde repoet "${this.cfg.repo}" hos ${this.cfg.owner}. Tjek stavningen, og at nøglen har adgang til netop det repo (Repository access → Only select repositories).`);
+        if (rr.status === 401) throw new Error('Nøglen (token) virker ikke – den er forkert eller udløbet.');
+        return { sha: null, docs: {}, missing: true };
+      }
       if (r.status === 401) throw new Error('Nøglen (token) virker ikke – den er forkert eller udløbet.');
       if (r.status === 403) throw new Error('Nøglen har ikke adgang til repoet.');
       if (!r.ok) throw new Error('GitHub svarede ' + r.status);
@@ -145,11 +150,12 @@
           const localChanged = JSON.stringify(merged) !== JSON.stringify(st.docs);
           const remoteNeeds = JSON.stringify(merged) !== JSON.stringify(remote.docs);
           st.docs = merged; st.sha = remote.sha; persist(); if (localChanged) emit();
+          this.empty = !!remote.missing && !Object.keys(merged).length;
           if (!remoteNeeds){ st.pending = false; persist(); break; }
           const sha = await this.put(merged, remote.sha);
           if (sha){ st.sha = sha; st.pending = false; persist(); break; }
         }
-        this.status = 'ok'; this.msg = ''; this.last = new Date();
+        this.status = this.empty ? 'empty' : 'ok'; this.msg = this.empty ? `Filen "${this.cfg.path}" findes ikke i ${this.cfg.repo} endnu.` : ''; this.last = new Date();
       } catch (e){ this.status = 'error'; this.msg = e.message || String(e); }
       this.busy = false; ui();
       if (st.pending && this.status === 'ok') this.schedule();
@@ -162,12 +168,12 @@
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   function label(){
     const t = Sync.last ? Sync.last.toLocaleTimeString('da-DK', { hour: '2-digit', minute: '2-digit' }) : '';
-    return { off: ['☁︎', 'Synk ikke slået til'], idle: ['☁︎', 'Synk'], pending: ['☁︎', 'Gemmer…'], syncing: ['⟳', 'Synkroniserer…'], ok: ['☁︎', 'Synkroniseret ' + t], offline: ['☁︎', 'Offline – gemmes senere'], error: ['⚠', 'Synk-fejl'] }[Sync.status];
+    return { off: ['☁︎', 'Synk ikke slået til'], idle: ['☁︎', 'Synk'], pending: ['☁︎', 'Gemmer…'], syncing: ['⟳', 'Synkroniserer…'], ok: ['☁︎', 'Synkroniseret ' + t], offline: ['☁︎', 'Offline – gemmes senere'], error: ['⚠', 'Synk-fejl'], empty: ['⚠', 'Ingen data på GitHub endnu'] }[Sync.status];
   }
   function ui(){
     const b = document.getElementById('syncBtn'); if (!b) return;
     const [ic, tx] = label(); b.innerHTML = `<span aria-hidden="true">${ic}</span><span class="sb-t">${esc(tx)}</span>`;
-    b.title = Sync.msg || tx; b.classList.toggle('err', Sync.status === 'error'); b.classList.toggle('off', Sync.status === 'off');
+    b.title = Sync.msg || tx; b.classList.toggle('err', Sync.status === 'error' || Sync.status === 'empty'); b.classList.toggle('off', Sync.status === 'off');
   }
   function addButton(){
     const top = document.querySelector('.top'); if (!top || document.getElementById('syncBtn')) return;
@@ -187,7 +193,7 @@
     const m = document.createElement('div'); m.id = 'syncModal';
     m.innerHTML = `<div class="sheet" role="dialog" aria-modal="true"><h2>Synk mellem mobil og PC</h2>
       <p class="muted" style="margin:0 0 10px">Budgettet gemmes altid på denne enhed. Med synk gemmes det også i en <b>privat</b> fil på GitHub, så I ser de samme tal på alle enheder.</p>
-      ${Sync.status === 'error' ? `<div class="banner err">${esc(Sync.msg)}</div>` : Sync.cfg ? `<div class="banner">${esc(label()[1])}</div>` : ''}
+      ${Sync.status === 'error' ? `<div class="banner err">${esc(Sync.msg)}</div>` : Sync.status === 'empty' ? `<div class="banner err">Forbindelsen virker, men ${esc(Sync.msg)} Upload <b>budget-data.json</b> til roden af repoet – eller luk dette vindue, tryk <b>Gendan fra sikkerhedskopi</b> og vælg filen. Så sendes den automatisk til GitHub.</div>` : Sync.cfg ? `<div class="banner">${esc(label()[1])}</div>` : ''}
       <div class="row2"><label class="field">GitHub-brugernavn<input class="inp" id="sgOwner" value="${esc(c.owner)}" autocapitalize="off" autocorrect="off"></label>
       <label class="field">Privat data-repo<input class="inp" id="sgRepo" value="${esc(c.repo)}" autocapitalize="off" autocorrect="off"></label></div>
       <div class="row2" style="margin-top:8px"><label class="field">Gren<input class="inp" id="sgBranch" value="${esc(c.branch)}" autocapitalize="off"></label>

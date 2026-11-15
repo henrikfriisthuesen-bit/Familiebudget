@@ -349,7 +349,7 @@ const INSURERS = [
 ];
 
 /* ---------- state ---------- */
-const S = { f:{q:'', cat:'', kind:'', m:new Date().getMonth()}, qsel:null, years:{}, year:null, ins:{lines:{}}, hh:{}, quotes:{}, sv:{items:{}}, db:null, dbState:'loading', tab:'oversigt', ai:null, aiBusy:false, dl:null, sample:null, assets:null, docs:{lines:{}}, goals:{items:{}}, rules:{map:{}} };
+const S = { f:{q:'', cat:'', kind:'', m:new Date().getMonth()}, qsel:null, years:{}, year:null, ins:{lines:{}}, hh:{}, quotes:{}, sv:{items:{}}, db:null, dbState:'loading', tab:'oversigt', ai:null, aiBusy:false, dl:null, sample:null, assets:null, docs:{lines:{}}, goals:{items:{}}, rules:{map:{}}, insrev:{}, review:{} };
 const B = () => S.years[S.year];
 
 /* ---------- calc ---------- */
@@ -453,6 +453,8 @@ const saveSv = () => queueSave('savings/status', () => S.sv, 900);
 const saveDocs = () => queueSave('docs/index', () => S.docs, 300);
 const saveGoals = () => queueSave('settings/goals', () => S.goals, 600);
 const saveRules = () => queueSave('settings/bankrules', () => S.rules, 600);
+const saveInsrev = () => queueSave('settings/insreview', () => S.insrev, 300);
+const saveReview = () => queueSave('insurance/review', () => S.review, 300);
 async function saveQuote(q){ if (!S.db) return; setSync('Gemmer…'); try { await S.db.collection('quotes').doc(q.id).set(clone(q)); setSync('Gemt ✓'); } catch(e){ setSync('Kunne ikke gemme', true); } }
 async function delQuote(id){ if (!S.db) return; try { await S.db.collection('quotes').doc(id).delete(); } catch(e){} }
 
@@ -492,6 +494,8 @@ async function initDb(){
   sub('docs/index', 'docs', {lines:{}});
   sub('settings/goals', 'goals', {items:{}});
   sub('settings/bankrules', 'rules', {map:{}});
+  sub('settings/insreview', 'insrev', {});
+  sub('insurance/review', 'review', {});
   db.collection('quotes').onSnapshot(snap => {
     const q = {}; snap.docs.forEach(d => q[d.id] = d.data());
     if (JSON.stringify(q) !== JSON.stringify(S.quotes)){ S.quotes = q; softRender(); }
@@ -1229,6 +1233,85 @@ async function uploadDoc(lid, file){
   catch (e){ toast(e && e.code === 'too_large' ? 'Filen er for stor (maks. 20 MB)' : e && e.code === 'quota_or_state' ? 'Der er ikke mere plads' : 'Kunne ikke gemme filen'); }
 }
 
+/* ---------- FORSIKRINGSGENNEMGANG ---------- */
+const REVIEW_YEARS = 2, MAX_SNOOZE_MONTHS = 12;
+const todayStr = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+function addMonthsStr(ds, n){ const [y, m, d] = ds.split('-').map(Number); const dt = new Date(y, m - 1 + n, Math.min(d || 1, 28)); return dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0'); }
+const dkDate = ds => { if (!ds) return ''; const [y, m, d] = ds.split('-').map(Number); return d + '. ' + MONL[m - 1] + ' ' + y; };
+function reviewState(){ const r = S.insrev || {}; if (!r.nextReview) return null; const due = r.snoozedUntil || r.nextReview, max = addMonthsStr(r.nextReview, MAX_SNOOZE_MONTHS);
+  return {r, due, isDue: todayStr() >= due, max, canSnooze: due < max, daysLeft: Math.round((new Date(due) - new Date(todayStr())) / 864e5)}; }
+function payTerms(l){ const m = (S.ins.lines || {})[l.id] || {}; if (m.terms) return {t: m.terms, inf: false};
+  const idx = l.amounts.map((v, i) => v ? i : -1).filter(i => i >= 0), n = idx.length; if (!n) return {t: '', inf: true};
+  if (n >= 2 && idx.every((v, i) => !i || v === idx[i - 1] + 1)) return {t: 'Månedlig', inf: true};
+  return {t: n >= 11 ? 'Månedlig' : n >= 4 ? 'Kvartalsvis' : n >= 2 ? 'Halvårlig' : 'Årlig', inf: true}; }
+const isMonthly = t => /m(å|aa)nedlig/i.test(t || '');
+function nextRenewal(m){ if (!m || !m.renewal) return null; const now = new Date(); let rd = new Date(now.getFullYear(), +m.renewal - 1, 1); if (rd < now) rd = new Date(now.getFullYear() + 1, +m.renewal - 1, 1); return rd; }
+function reviewCard(){
+  const st = reviewState(), r = S.insrev || {};
+  let body;
+  if (!st) body = `<p style="margin:0">Når I har skiftet forsikring, starter et 2-års-ur. Derefter minder appen jer om en ny gennemgang af policer, betingelser og priser – og I kan udsætte den op til 1 år.</p>
+    <div class="toolbar" style="margin:10px 0 0"><button class="btn small" data-act="revSetSwitch">Registrér dato for seneste skift</button><button class="btn small" data-act="revOpen">Start gennemgang nu</button></div>`;
+  else body = `<p style="margin:0">${r.lastSwitch ? 'Seneste skift: <b>' + dkDate(r.lastSwitch) + '</b> · ' : ''}Næste gennemgang: <b>${dkDate(st.due)}</b>${r.snoozedUntil ? ` <span class="badge warn">udsat (senest ${dkDate(st.max)})</span>` : ''}${st.isDue ? ' <span class="badge crit">⚠ nu</span>' : ` <span class="muted">(om ${st.daysLeft > 60 ? Math.round(st.daysLeft / 30.4) + ' måneder' : st.daysLeft + ' dage'})</span>`}</p>
+    <div class="toolbar" style="margin:10px 0 0"><button class="btn small ${st.isDue ? 'primary' : ''}" data-act="revOpen">${st.isDue ? 'Start gennemgang' : 'Gennemgå nu'}</button>${st.isDue && st.canSnooze ? '<button class="btn small" data-act="revSnooze">Udsæt</button>' : ''}<button class="btn small ghost" data-act="revSetSwitch">Ret dato for skift</button></div>`;
+  const rv = S.review && S.review.text ? `<details class="fold" style="margin-top:10px"><summary>Seneste gennemgang fra Claude (${esc(dkDate(S.review.date))})</summary><div class="ai" style="margin-top:6px">${md(S.review.text)}</div></details>` : '';
+  return `<div class="card"><h2>Forsikringsgennemgang <span class="hint">hvert ${REVIEW_YEARS}. år efter skift · altid månedlig betaling</span></h2>${body}${rv}</div>`;
+}
+function setSwitchModal(){
+  const r = S.insrev || {};
+  openModal(`<h2>Seneste skift af forsikring</h2><p class="muted" style="margin:0 0 12px">Næste gennemgang bliver ${REVIEW_YEARS} år efter denne dato.</p>
+    <label class="field" style="max-width:240px">Dato for skift<input class="inp" type="date" id="ssD" value="${esc(r.lastSwitch || todayStr())}"></label>
+    <div class="acts"><span class="sp"></span><button class="btn" data-act="close">Annuller</button><button class="btn primary" data-act="ssGo">Gem</button></div>`, () => {
+    MODAL_ACTS = { ssGo(){ const d = $('#ssD').value; if (!d) return; registerSwitch(d); closeModal(); render(); } };
+  });
+}
+function registerSwitch(dateStr){ S.insrev = Object.assign({}, S.insrev, {lastSwitch: dateStr, nextReview: addMonthsStr(dateStr, REVIEW_YEARS * 12), snoozedUntil: null, history: ((S.insrev || {}).history || []).concat({type: 'skift', date: dateStr})}); saveInsrev(); }
+function snoozeModal(){
+  const st = reviewState(); if (!st) return; const opts = [1, 3, 6, 12].map(n => ({n, d: addMonthsStr(todayStr(), n)})).filter(o => o.d <= st.max);
+  openModal(`<h2>Udsæt forsikringsgennemgangen</h2><p class="muted" style="margin:0 0 12px">Den kan udsættes til senest ${dkDate(st.max)} (1 år efter den planlagte dato).</p>
+    ${opts.length ? `<div class="toolbar">${opts.map(o => `<button class="btn" data-act="snGo" data-d="${o.d}">${o.n} måned${o.n > 1 ? 'er' : ''}<span class="muted" style="font-size:12px"> · ${dkDate(o.d)}</span></button>`).join('')}${opts[opts.length - 1].d < st.max ? `<button class="btn" data-act="snGo" data-d="${st.max}">Maksimalt · ${dkDate(st.max)}</button>` : ''}</div>` : '<p class="st-crit">Gennemgangen kan ikke udsættes mere.</p>'}
+    <div class="acts"><span class="sp"></span><button class="btn" data-act="close">Luk</button></div>`, () => {
+    MODAL_ACTS = { snGo(t){ S.insrev = Object.assign({}, S.insrev, {snoozedUntil: t.dataset.d, history: (S.insrev.history || []).concat({type: 'udsat', date: todayStr(), until: t.dataset.d})}); saveInsrev(); closeModal(); render(); toast('Udsat til ' + dkDate(t.dataset.d)); } };
+  });
+}
+function reviewPackage(){
+  const b = B(), L = insLines(b).filter(({l}) => sum(l.amounts) || ((S.ins.lines || {})[l.id] || {}).provider);
+  let t = `Forsikringsgennemgang for familien (${dkDate(todayStr())}). Krav: alle forsikringer skal kunne betales månedligt.\n\n`;
+  L.forEach(({l}) => { const m = (S.ins.lines || {})[l.id] || {}, p = insPrice(l), rd = nextRenewal(m);
+    t += `• ${l.name}: ${m.provider || 'selskab ukendt'}, ${fmt(Math.round(p.now / 12))} kr/md (${fmt(p.now)} kr/år)${m.deductible ? ', selvrisiko ' + m.deductible : ''}${rd ? ', hovedforfald ' + rd.getDate() + '. ' + MONL[rd.getMonth()] + ' ' + rd.getFullYear() : ''}, betaling: ${payTerms(l).t || 'ukendt'}.\n  Dækning: ${m.coverage || '–'}\n`; });
+  const qs = Object.values(S.quotes || {}).filter(q => q.status !== 'afvist'); if (qs.length){ t += `\nModtagne tilbud:\n`; qs.forEach(q => { const ln = findLineIn(b, q.lineId); t += `• ${q.company} – ${ln ? ln.l.name : ''}: ${fmt(q.yearly)} kr/år, månedlig betaling: ${q.monthly || 'ukendt'}${q.monthlyFee ? ' (gebyr ' + q.monthlyFee + ' kr/md)' : ''}\n`; }); }
+  return t;
+}
+function reviewModal(){
+  const b = B(), L = insLines(b).filter(({l}) => sum(l.amounts) || ((S.ins.lines || {})[l.id] || {}).provider), st = reviewState(), now = new Date();
+  const notMon = L.filter(({l}) => { const pt = payTerms(l); return pt.t && !isMonthly(pt.t); });
+  const rows = L.map(({l}) => { const m = (S.ins.lines || {})[l.id] || {}, p = insPrice(l), rd = nextRenewal(m), dl = rd ? new Date(rd.getTime() - 30 * 864e5) : null, docs = ((S.docs.lines || {})[l.id] || []).length;
+    return `<tr><td><b>${esc(l.name)}</b><div class="muted" style="font-size:12px;white-space:normal;max-width:360px">${esc(m.coverage || 'Dækning ikke angivet')}</div></td><td>${esc(m.provider || '–')}</td><td class="num">${fmt(Math.round(p.now / 12))}/md<div class="muted" style="font-size:12px">${fmt(p.now)}/år</div></td><td>${esc(m.deductible || '–')}</td>
+      <td>${rd ? `${rd.getDate()}. ${MONL[rd.getMonth()]} ${rd.getFullYear()}<div class="muted" style="font-size:12px">${dl > now ? 'opsig senest ' + dl.getDate() + '. ' + MONL[dl.getMonth()] : 'kort varsel mod gebyr'}</div>` : '–'}</td>
+      <td>${(pt => isMonthly(pt.t) ? '<span class="st-good">✓ Månedlig</span>' : pt.t ? `<span class="st-crit">⚠ ${esc(pt.t)}</span><div class="muted" style="font-size:12px">skift til månedlig</div>` : '<span class="muted">?</span>')(payTerms(l))}</td><td>${docs ? '📎 ' + docs : ''}</td></tr>`; }).join('');
+  openModal(`<h2>Forsikringsgennemgang</h2><p class="muted" style="margin:0 0 10px">${st && st.r.lastSwitch ? `${REVIEW_YEARS} år siden skiftet ${dkDate(st.r.lastSwitch)}. ` : ''}Gennemgå dækning, betingelser og priser – og husk, at alle forsikringer skal kunne betales månedligt.</p>
+    <div class="tscroll"><table class="t" style="font-size:13px"><thead><tr><th>Police</th><th style="text-align:left">Selskab</th><th>Pris</th><th style="text-align:left">Selvrisiko</th><th style="text-align:left">Hovedforfald</th><th style="text-align:left">Betaling</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
+    ${notMon.length ? `<p class="st-crit" style="margin:10px 0 0">⚠ Betales ikke månedligt i dag: ${notMon.map(({l}) => esc(l.name)).join(', ')}. Bed selskabet om at lægge dem om til månedlig betaling.</p>` : ''}
+    <div class="box"><h4>Tjekliste</h4><ul style="margin:0;padding-left:20px;font-size:14px;color:var(--ink-2)">
+      <li>Passer dækningen stadig? Fx bilernes alder og kørsel, ændringer i huset, børnenes alder, jeres job (beskæftigelse på ulykke).</li>
+      <li>Er der dobbeltdækning (ulykke, børneforsikringer, rejse, sundhed)?</li>
+      <li>Indhent tilbud – kun fra selskaber, der tilbyder <b>månedlig betaling</b> (spørg til gebyr).</li>
+      <li>Brug det bedste tilbud til at forhandle med jeres nuværende selskab.</li>
+      <li>Opsig senest 30 dage før hovedforfald – eller med kort varsel mod gebyr.</li></ul></div>
+    ${S.sample ? `<div class="box"><h4>Claudes vurdering</h4><p class="muted" style="margin:0 0 8px;font-size:13px">Claude gennemgår policer, betingelser og priser og foreslår, hvad I bør gøre.</p><button class="btn small primary" data-act="revAI">Få Claudes gennemgang</button><div class="ai" id="revOut" style="margin-top:8px">${S.review && S.review.text ? md(S.review.text) : ''}</div></div>` : ''}
+    <div class="acts"><button class="btn" data-act="revCopy">Kopiér til Claude</button><a class="btn" href="#forsikringer" data-act="close">Indhent tilbud</a><span class="sp"></span>${st && st.isDue && st.canSnooze ? '<button class="btn" data-act="revSnooze2">Udsæt</button>' : ''}<button class="btn" data-act="revKeep">Behold – næste om 1 år</button><button class="btn" data-act="close">Luk</button></div>`, () => {
+    MODAL_ACTS = {
+      async revCopy(){ try { await navigator.clipboard.writeText(reviewPackage() + '\nGennemgå venligst policer, betingelser og priser, sammenlign med andre selskaber, og giv en anbefaling. Krav: månedlig betaling.'); toast('Kopieret – indsæt i en samtale med Claude'); } catch (e){ toast('Kunne ikke kopiere'); } },
+      revSnooze2(){ closeModal(); snoozeModal(); },
+      revKeep(){ const d = addMonthsStr(todayStr(), 12); S.insrev = Object.assign({}, S.insrev, {nextReview: d, snoozedUntil: null, history: ((S.insrev || {}).history || []).concat({type: 'gennemgået', date: todayStr()})}); saveInsrev(); closeModal(); render(); toast('Næste gennemgang ' + dkDate(d)); },
+      async revAI(btn){ if (!S.sample) return; btn.disabled = true; btn.textContent = 'Claude gennemgår…'; const out = $('#revOut');
+        const prompt = `Du er en uvildig dansk forsikringsrådgiver. Gennemgå familiens forsikringer nedenfor: dækning, selvrisiko, betingelser og priser. Vurdér prisniveauet i forhold til det danske marked, peg på dobbeltdækning, over- eller underforsikring og ting der bør justeres, og giv en prioriteret liste med 5-8 konkrete handlinger med estimeret besparelse i kr/år hvor muligt. Krav: alle forsikringer skal kunne betales månedligt – fremhæv hvis noget ikke opfylder det. Nævn frister (opsigelse senest 30 dage før hovedforfald). Svar på dansk som punktliste med fede overskrifter. Vær ærlig om usikkerhed.\n\n${reviewPackage()}`;
+        try { const r = await S.sample(prompt, {modelTier: 'complex', onText: ({text}) => { if (out) out.innerHTML = md(text); }}); S.review = {date: todayStr(), text: r.text, by: 'app'}; saveReview(); toast('Gennemgangen er gemt ✓'); }
+        catch (e){ if (out) out.innerHTML = '<p class="st-crit">Claude kunne ikke svare lige nu – prøv igen senere.</p>'; }
+        btn.disabled = false; btn.textContent = 'Få Claudes gennemgang igen'; }
+    };
+  }, true);
+}
+
 /* ---------- HUSKELISTE ---------- */
 function reminderItems(b){
   const items = [], now = new Date(), y = now.getFullYear(), cm = now.getMonth(), dd = d => d.getDate() + '. ' + MONL[d.getMonth()] + (d.getFullYear() !== y ? ' ' + d.getFullYear() : '');
@@ -1241,6 +1324,7 @@ function reminderItems(b){
     const dl = new Date(rd.getTime() - 30 * 864e5);
     items.push(['🛡', `${l.name}${m.provider ? ' (' + m.provider + ')' : ''} fornyes ${dd(rd)} – ${dl > now ? 'opsig senest ' + dd(dl) + ', hvis I vil skifte' : 'fristen er passeret, men I kan skifte med kort varsel mod gebyr'}`, 'href', '#forsikringer']);
   }
+  const rs = reviewState(); if (rs && rs.isDue) items.push(['🛡', `Tid til forsikringsgennemgang${rs.r.lastSwitch ? ' – ' + REVIEW_YEARS + ' år siden skiftet' : ''}${rs.canSnooze ? '' : ' (kan ikke udsættes mere)'}`, 'act', 'revOpen']);
   const pend = b.linked ? pendingFromPrev(S.year).length : 0;
   if (pend) items.push(['🔄', `${pend} ændring${pend > 1 ? 'er' : ''} fra ${+S.year - 1} venter på din godkendelse`, 'act', 'syncReview']);
   const nx = S.years[String(+b.year + 1)];
@@ -1599,9 +1683,10 @@ function vInsurance(){
   const b = B(), L = insLines(b);
   const tot = sum(L.map(x => sum(x.l.amounts))), totNow = sum(L.map(x => insPrice(x.l).now));
   const quotes = Object.values(S.quotes).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-  const best = {}; quotes.forEach(q => { if (q.status !== 'afvist' && (!best[q.lineId] || q.yearly < best[q.lineId].yearly)) best[q.lineId] = q; });
+  const qYear = q => q.yearly + (+q.monthlyFee || 0) * 12;
+  const best = {}; quotes.forEach(q => { if (q.status !== 'afvist' && q.monthly !== 'nej' && (!best[q.lineId] || qYear(q) < qYear(best[q.lineId]))) best[q.lineId] = q; });
   let potential = 0; L.forEach(({l}) => { const q = best[l.id]; if (q){ const d = insPrice(l).now - q.yearly; if (d > 0 && q.status !== 'valgt') potential += d; } });
-  let h = `<h1>Forsikringer</h1><p class="sub">Overblik over policer, indhent tilbud og sammenlign. Udfyld selskab og hovedforfald, så ved I hvornår I kan skifte.</p>
+  let h = `<h1>Forsikringer</h1><p class="sub">Overblik over policer, indhent tilbud og sammenlign. Udfyld selskab og hovedforfald, så ved I hvornår I kan skifte.</p>` + reviewCard() + `
   <div class="tiles" style="grid-template-columns:repeat(3,minmax(0,1fr))">
     ${tile('Forsikringer i ' + esc(S.year), kr(tot), L.length + ' policer')}
     ${tile(L.some(x => insPrice(x.l).next) ? 'Ny årspris' + (L.map(x => insPrice(x.l).next).find(Boolean)?.year ? ' ' + L.map(x => insPrice(x.l).next).find(Boolean).year : '') : 'Årspris efter seneste stigning', kr(totNow), (totNow - tot >= 0 ? '+' : '') + kr(totNow - tot) + ' vs. budget')}
@@ -1610,7 +1695,7 @@ function vInsurance(){
   <div class="card"><div style="display:flex;align-items:center;gap:8px;margin-bottom:12px"><h2 style="margin:0;flex:1">Jeres policer</h2><button class="btn small primary" data-act="policy">+ Ny / skift forsikring</button></div><div class="tscroll"><table class="t ins"><thead><tr><th>Forsikring</th><th>Budget ${esc(S.year)}</th><th>Ny årspris</th><th>Pr. md.</th><th>Ændring</th><th>Bedste tilbud</th><th></th></tr></thead><tbody>
   ${L.map(({l}) => { const p = insPrice(l), m = S.ins.lines[l.id] || {}, q = best[l.id];
     const d = q ? p.now - q.yearly : 0;
-    return `<tr><td><b>${esc(l.name)}</b><span class="p">${esc(m.provider || 'Selskab ikke angivet')}${m.renewal ? ' · hovedforfald ' + MONL[+m.renewal - 1] : ''}</span></td>
+    return `<tr><td><b>${esc(l.name)}</b><span class="p">${esc(m.provider || 'Selskab ikke angivet')}${m.renewal ? ' · hovedforfald ' + MONL[+m.renewal - 1] : ''}${(pt => pt.t && !isMonthly(pt.t) ? ' · <span class="st-crit">⚠ ' + esc(pt.t) + ' betaling – skal være månedlig</span>' : '')(payTerms(l))}</span></td>
       <td class="num">${fmt(p.budget)}</td><td class="num">${fmt(p.now)}${p.next ? `<span class="p">fra ${p.next.year || 'næste år'}</span>` : ''}</td><td class="num">${p.next ? fmt(p.next.monthly) : '–'}</td><td class="num">${Math.abs(p.change) >= 0.5 && p.n >= 4 ? (p.change > 0 ? '▲ ' : '▼ ') + pct(p.change) : '–'}</td>
       <td class="num">${q ? fmt(q.yearly) + `<span class="p">${esc(q.company)}${d > 0 ? ' · spar ' + fmt(d) : ''}</span>` : '<span class="muted">–</span>'}</td>
       <td><button class="btn small" data-act="insEdit" data-l="${l.id}">Detaljer</button></td></tr>`; }).join('')}
@@ -1650,12 +1735,13 @@ function vInsurance(){
     </div></details></div>`;
   // quotes
   h += `<div class="card"><h2>Modtagne tilbud</h2>
-    ${quotes.map(q => { const ln = L.find(x => x.l.id === q.lineId); const cur = ln ? insPrice(ln.l).now : 0; const d = cur - q.yearly;
+    ${quotes.map(q => { const ln = L.find(x => x.l.id === q.lineId); const cur = ln ? insPrice(ln.l).now : 0; const d = cur - qYear(q);
       return `<div class="quote"><div><b>${esc(q.company)}</b> · ${esc(ln ? ln.l.name : 'Ukendt')} <span class="muted">· ${esc(q.date || '')}</span>
         ${q.status === 'valgt' ? '<span class="badge good">✓ Valgt</span>' : q.status === 'afvist' ? '<span class="badge">Afvist</span>' : ''}
+        ${q.monthly === 'ja' ? `<span class="badge good">✓ Månedlig${q.monthlyFee ? ' +' + fmt(q.monthlyFee) + ' kr/md' : ''}</span>` : q.monthly === 'nej' ? '<span class="badge crit">⚠ Ikke månedlig – opfylder ikke kravet</span>' : '<span class="badge warn">Månedlig betaling? Spørg</span>'}
         <div class="muted" style="font-size:13px">${q.deductible ? 'Selvrisiko ' + esc(q.deductible) + ' · ' : ''}${esc(q.notes || '')}</div></div>
         <div style="text-align:right"><b class="num">${kr(q.yearly)}/år</b><div style="font-size:12.5px" class="${d > 0 ? 'st-good' : 'st-crit'}">${cur ? (d > 0 ? '▼ ' + kr(d) + ' billigere' : '▲ ' + kr(-d) + ' dyrere') : ''}</div>
-        <div class="inline" style="justify-content:flex-end;margin-top:6px">${q.status !== 'valgt' && d > 0 ? `<button class="btn small primary" data-act="useQuote" data-id="${q.id}">Skift til dette tilbud</button>` : ''}<button class="btn small" data-act="editQuote" data-id="${q.id}">Ret</button></div></div></div>`; }).join('') || '<p class="muted">Ingen tilbud endnu. Når I får et tilbud, så registrér det her – så regner appen besparelsen ud.</p>'}
+        <div class="inline" style="justify-content:flex-end;margin-top:6px">${q.status !== 'valgt' && d > 0 && q.monthly !== 'nej' ? `<button class="btn small primary" data-act="useQuote" data-id="${q.id}">Skift til dette tilbud</button>` : ''}<button class="btn small" data-act="editQuote" data-id="${q.id}">Ret</button></div></div></div>`; }).join('') || '<p class="muted">Ingen tilbud endnu. Når I får et tilbud, så registrér det her – så regner appen besparelsen ud.</p>'}
     <div style="padding-top:10px"><button class="btn small" data-act="editQuote">+ Registrér tilbud</button></div></div>`;
   h += `<div class="card"><h2>Godt at vide om at skifte</h2><ul style="margin:0;padding-left:20px;color:var(--ink-2);font-size:14px">
     <li>De fleste forsikringer kan opsiges med mindst en måneds varsel til udløbet af forsikringsåret (hovedforfald). Mod gebyr kan de fleste opsiges med 30 dages varsel til udgangen af en måned.</li>
@@ -1682,7 +1768,7 @@ function quoteText(){
   if (hh.houseType || hh.area || hh.built) t += `\nBolig:\n` + ln('houseType', 'Type') + ln('area', 'Boligareal m²') + ln('built', 'Opførelsesår') + ln('roof', 'Tag') + ln('basement', 'Kælder m²') + ln('contents', 'Indbosum');
   if (hh.car1 || hh.car2) t += `\nBiler:\n` + (hh.car1 ? `- ${hh.car1}${hh.car1km ? ', ' + hh.car1km + ' km/år' : ''}${hh.car1cover ? ', ønsket dækning: ' + hh.car1cover : ''}\n` : '') + (hh.car2 ? `- ${hh.car2}${hh.car2km ? ', ' + hh.car2km + ' km/år' : ''}${hh.car2cover ? ', ønsket dækning: ' + hh.car2cover : ''}\n` : '') + ln('claimFree', 'Skadesfri år');
   if (hh.current) t += `\nVi er i dag forsikret hos ${hh.current}.`;
-  t += `\nVi ønsker mindst samme dækning som i dag og vil gerne høre om samle-/pakkerabat${hh.union ? ' og medlemsrabatter' : ''}. Oplys venligst pris pr. år, selvrisiko og væsentlige forskelle i dækning.\n\nMed venlig hilsen\n${hh.names || ''}${hh.phone ? '\nTlf. ' + hh.phone : ''}`;
+  t += `\nVi ønsker mindst samme dækning som i dag og vil gerne høre om samle-/pakkerabat${hh.union ? ' og medlemsrabatter' : ''}. Oplys venligst pris pr. år, selvrisiko og væsentlige forskelle i dækning.\n\nKrav: Vi betaler altid månedligt. Bekræft venligst, at forsikringerne kan betales månedligt, og oplys evt. gebyr ved månedlig betaling.\n\nMed venlig hilsen\n${hh.names || ''}${hh.phone ? '\nTlf. ' + hh.phone : ''}`;
   return t;
 }
 function insEditModal(lid){
@@ -1692,6 +1778,7 @@ function insEditModal(lid){
     <label class="field">Hovedforfald (måned)<select class="inp" id="imRen"><option value="">Ved ikke</option>${MONL.map((x, i) => `<option value="${i + 1}" ${+m.renewal === i + 1 ? 'selected' : ''}>${x}</option>`).join('')}</select></label></div>
     <div class="row2" style="margin-top:10px"><label class="field">Policenummer<input class="inp" id="imPol" value="${esc(m.policy || '')}"></label>
     <label class="field">Selvrisiko<input class="inp" id="imDed" value="${esc(m.deductible || '')}" placeholder="fx 5.000 kr"></label></div>
+    <label class="field" style="margin-top:10px;max-width:260px">Betaling (krav: månedlig)<select class="inp" id="imTerms">${['Månedlig', 'Kvartalsvis', 'Halvårlig', 'Årlig'].map(x => `<option ${(m.terms || payTerms(l).t || 'Månedlig') === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
     <div class="row2" style="margin-top:10px"><label class="field">Ny pris (kr/md)<input class="inp num" id="imNext" inputmode="decimal" value="${m.nextPrice ? fmt(m.nextPrice) : (p.next ? fmt(p.next.monthly) : '')}" placeholder="fx 477"></label>
     <label class="field">Gælder fra år<input class="inp num" id="imNextY" inputmode="numeric" value="${esc(m.nextYear || (p.next && p.next.year) || '')}" placeholder="fx 2027"></label></div>
     <label class="field" style="margin-top:10px">Dækning (bruges i tilbudsforespørgslen)<textarea class="inp" id="imCov" placeholder="fx Kasko, vejhjælp, glas…" style="min-height:110px">${esc(m.coverage || '')}</textarea></label>
@@ -1699,7 +1786,7 @@ function insEditModal(lid){
     <datalist id="insList">${INSURERS.map(x => `<option value="${x[0]}">`).join('')}</datalist>
     ${docsHtml(lid)}
     <div class="acts"><button class="btn" data-act="imPolicy">Ny pris / nyt selskab…</button><span class="sp"></span><button class="btn" data-act="close">Annuller</button><button class="btn primary" data-act="imSave">Gem</button></div>`, () => {
-    MODAL_ACTS = { imPolicy(){ closeModal(); policyModal({replace: lid}); }, imSave(){ S.ins.lines[lid] = Object.assign({}, m, {provider: $('#imProv').value.trim(), renewal: $('#imRen').value, policy: $('#imPol').value.trim(), deductible: $('#imDed').value.trim(), coverage: $('#imCov').value.trim(), nextPrice: parseNum($('#imNext').value) || null, nextYear: parseNum($('#imNextY').value) || null}); saveIns(); closeModal(); render(); } };
+    MODAL_ACTS = { imPolicy(){ closeModal(); policyModal({replace: lid}); }, imSave(){ S.ins.lines[lid] = Object.assign({}, m, {provider: $('#imProv').value.trim(), renewal: $('#imRen').value, policy: $('#imPol').value.trim(), deductible: $('#imDed').value.trim(), coverage: $('#imCov').value.trim(), nextPrice: parseNum($('#imNext').value) || null, nextYear: parseNum($('#imNextY').value) || null, terms: $('#imTerms').value}); saveIns(); closeModal(); render(); } };
   });
 }
 function quoteModal(id){
@@ -1708,6 +1795,8 @@ function quoteModal(id){
     <label class="field" style="margin-top:12px">Forsikring<select class="inp" id="qmLine">${L.map(({l}) => `<option value="${l.id}" ${q.lineId === l.id ? 'selected' : ''}>${esc(l.name)} (nu ${fmt(insPrice(l).now)} kr/år)</option>`).join('')}</select></label>
     <div class="row2" style="margin-top:10px"><label class="field">Selskab<input class="inp" id="qmCo" value="${esc(q.company || '')}" list="insList2"></label>
     <label class="field">Pris pr. år (kr)<input class="inp num" id="qmYear" inputmode="decimal" value="${kr0(q.yearly)}"></label></div>
+    <div class="row2" style="margin-top:10px"><label class="field">Kan betales månedligt? (krav)<select class="inp" id="qmMon"><option value="">Ved ikke endnu</option><option value="ja" ${q.monthly === 'ja' ? 'selected' : ''}>Ja</option><option value="nej" ${q.monthly === 'nej' ? 'selected' : ''}>Nej</option></select></label>
+    <label class="field">Gebyr ved månedlig betaling (kr/md)<input class="inp num" id="qmFee" inputmode="decimal" value="${kr0(q.monthlyFee)}" placeholder="0"></label></div>
     <div class="row2" style="margin-top:10px"><label class="field">Selvrisiko<input class="inp" id="qmDed" value="${esc(q.deductible || '')}"></label>
     <label class="field">Status<select class="inp" id="qmSt"><option value="modtaget">Modtaget</option><option value="valgt" ${q.status === 'valgt' ? 'selected' : ''}>Valgt</option><option value="afvist" ${q.status === 'afvist' ? 'selected' : ''}>Afvist</option></select></label></div>
     <label class="field" style="margin-top:10px">Dækning / noter<textarea class="inp" id="qmNotes">${esc(q.notes || '')}</textarea></label>
@@ -1716,7 +1805,7 @@ function quoteModal(id){
     MODAL_ACTS = {
       qmDel(){ delete S.quotes[q.id]; delQuote(q.id); closeModal(); render(); },
       qmSave(){ const y = parseNum($('#qmYear').value), co = $('#qmCo').value.trim(); if (!co || !y){ toast('Udfyld selskab og pris'); return; }
-        Object.assign(q, {lineId: $('#qmLine').value, company: co, yearly: y, deductible: $('#qmDed').value.trim(), status: $('#qmSt').value, notes: $('#qmNotes').value.trim()});
+        Object.assign(q, {lineId: $('#qmLine').value, company: co, yearly: y, deductible: $('#qmDed').value.trim(), status: $('#qmSt').value, notes: $('#qmNotes').value.trim(), monthly: $('#qmMon').value, monthlyFee: parseNum($('#qmFee').value) || 0});
         S.quotes[q.id] = q; saveQuote(q); closeModal(); render(); }
     };
   });
@@ -1737,11 +1826,14 @@ function policyModal(opts = {}){
     <div class="row2" style="margin-top:10px"><label class="field">Selvrisiko<input class="inp" id="pmDed" value="${esc(opts.deductible || m0.deductible || '')}"></label>
     <label class="field">Hovedforfald<select class="inp" id="pmRen"><option value="">Samme som første betaling</option>${MONL.map((x, i) => `<option value="${i + 1}">${x}</option>`).join('')}</select></label></div>
     <label class="field" style="margin-top:10px">Dækning<textarea class="inp" id="pmCov">${esc(m0.coverage || '')}</textarea></label>
+    <label class="chk" style="margin-top:10px"><input type="checkbox" id="pmSwitch" ${opts.quote ? 'checked' : ''}><span><b>Vi har skiftet forsikring</b> – næste forsikringsgennemgang om ${REVIEW_YEARS} år</span></label>
     <p id="pmPrev" class="muted" style="margin:10px 0 0"></p>
     <div class="acts"><span class="sp"></span><button class="btn" data-act="close">Annuller</button><button class="btn primary" data-act="pmGo">Opdatér budget</button></div>`, sheet => {
     const prev = () => { const isNew = !$('#pmRep').value; $('#pmNameF').style.display = isNew ? '' : 'none';
       const y = $('#pmY').value, m = +$('#pmM').value, f = +$('#pmUnit').value, pr = parseNum($('#pmPrice').value), later = ys.filter(x => +x > +y);
-      $('#pmPrev').innerHTML = pr ? `Årspris ${kr(pr * 12 / f)}. Opdaterer ${y} fra ${MONL[m]}${later.length ? ' og hele ' + later.join(', ') : ''}.` : 'Skriv prisen pr. betaling.'; };
+      $('#pmPrev').innerHTML = (pr ? `Årspris ${kr(pr * 12 / f)}. Opdaterer ${y} fra ${MONL[m]}${later.length ? ' og hele ' + later.join(', ') : ''}.` : 'Skriv prisen pr. betaling.') + (f !== 1 ? ' <span class="st-crit">⚠ I har krav om månedlig betaling – spørg selskabet om månedlig betaling.</span>' : '');
+      const cur = (S.ins.lines[$('#pmRep').value] || {}).provider || ''; if (!opts.quote && !$('#pmSwitch').dataset.touched) $('#pmSwitch').checked = !!$('#pmRep').value && !!$('#pmCo').value.trim() && norm($('#pmCo').value.trim()) !== norm(cur); };
+    sheet.addEventListener('click', e => { if (e.target.id === 'pmSwitch') e.target.dataset.touched = '1'; });
     sheet.addEventListener('input', prev); sheet.addEventListener('change', e => { if (e.target.id === 'pmRep' && !opts.quote){ const mm = S.ins.lines[e.target.value] || {}; $('#pmCo').value = mm.provider || ''; $('#pmDed').value = mm.deductible || ''; $('#pmCov').value = mm.coverage || ''; } prev(); }); prev();
     MODAL_ACTS = { pmGo(){
       const repId = $('#pmRep').value, name = $('#pmName').value.trim(), co = $('#pmCo').value.trim(), pr = parseNum($('#pmPrice').value), f = +$('#pmUnit').value, y0 = $('#pmY').value, mStart = +$('#pmM').value;
@@ -1758,7 +1850,8 @@ function policyModal(opts = {}){
         l.note = (clean ? clean + '\n' : '') + nt;
         saveYear(y);
       });
-      const meta = Object.assign({}, S.ins.lines[id] || {}, {provider: co, deductible: $('#pmDed').value.trim(), coverage: $('#pmCov').value.trim(), renewal: $('#pmRen').value || String(mStart + 1), nextPrice: null, nextYear: null});
+      const meta = Object.assign({}, S.ins.lines[id] || {}, {provider: co, deductible: $('#pmDed').value.trim(), coverage: $('#pmCov').value.trim(), renewal: $('#pmRen').value || String(mStart + 1), nextPrice: null, nextYear: null, terms: f === 1 ? 'Månedlig' : f === 3 ? 'Kvartalsvis' : f === 6 ? 'Halvårlig' : 'Årlig'});
+      if ($('#pmSwitch').checked) registerSwitch(y0 + '-' + String(mStart + 1).padStart(2, '0') + '-01');
       S.ins.lines[id] = meta; saveIns();
       if (opts.quote && S.quotes[opts.quote]){ const q = S.quotes[opts.quote]; q.status = 'valgt'; saveQuote(q); }
       closeModal(); render(); toast('Budgettet er opdateret med den nye forsikring ✓');
@@ -1984,14 +2077,14 @@ function exportModal(){
   });
 }
 
-function backupData(){ return {format: 'familiebudget-backup', version: 1, exported: new Date().toISOString(), years: S.years, ins: S.ins, hh: S.hh, sv: S.sv, quotes: S.quotes, goals: S.goals, rules: S.rules, docs: S.docs}; }
+function backupData(){ return {format: 'familiebudget-backup', version: 1, exported: new Date().toISOString(), years: S.years, ins: S.ins, hh: S.hh, sv: S.sv, quotes: S.quotes, goals: S.goals, rules: S.rules, docs: S.docs, insrev: S.insrev, review: S.review}; }
 async function importBackup(file){
   let d;
   try { d = JSON.parse(await file.text()); } catch (e){ toast('Filen kunne ikke læses'); return; }
   if (d && d.app === 'familiebudget' && d.docs){ // datafil fra GitHub-synk
     const o = {years: {}, quotes: {}};
     for (const [path, v] of Object.entries(d.docs)){ if (!v || v.deleted) continue; const [col, id] = path.split('/');
-      if (col === 'budgets') o.years[id] = v.data; else if (col === 'quotes') o.quotes[id] = v.data; else if (path === 'insurance/meta') o.ins = v.data; else if (path === 'settings/household') o.hh = v.data; else if (path === 'savings/status') o.sv = v.data; else if (path === 'settings/goals') o.goals = v.data; else if (path === 'settings/bankrules') o.rules = v.data; else if (path === 'docs/index') o.docs = v.data; }
+      if (col === 'budgets') o.years[id] = v.data; else if (col === 'quotes') o.quotes[id] = v.data; else if (path === 'insurance/meta') o.ins = v.data; else if (path === 'settings/household') o.hh = v.data; else if (path === 'savings/status') o.sv = v.data; else if (path === 'settings/goals') o.goals = v.data; else if (path === 'settings/bankrules') o.rules = v.data; else if (path === 'docs/index') o.docs = v.data; else if (path === 'settings/insreview') o.insrev = v.data; else if (path === 'insurance/review') o.review = v.data; }
     d = Object.assign({format: 'familiebudget-backup'}, o);
   }
   if (!d || d.format !== 'familiebudget-backup' || !d.years){ toast('Det er ikke en sikkerhedskopi fra Familiebudget'); return; }
@@ -1999,6 +2092,7 @@ async function importBackup(file){
   confirmModal(`Gendan sikkerhedskopien med ${ys.length ? 'budget ' + ys.join(', ') : 'ingen budgetter'}? Eksisterende år med samme årstal bliver overskrevet.`, 'Gendan', async () => {
     for (const y of ys){ S.years[y] = d.years[y]; saveYear(y); }
     if (d.ins){ S.ins = d.ins; saveIns(); } if (d.hh){ S.hh = d.hh; saveHH(); } if (d.sv){ S.sv = d.sv; saveSv(); }
+    if (d.insrev){ S.insrev = d.insrev; saveInsrev(); } if (d.review){ S.review = d.review; saveReview(); }
     if (d.goals){ S.goals = d.goals; saveGoals(); } if (d.rules){ S.rules = d.rules; saveRules(); } if (d.docs){ S.docs = d.docs; saveDocs(); }
     for (const q of Object.values(d.quotes || {})){ S.quotes[q.id] = q; await saveQuote(q); }
     if (ys.length){ S.year = ys.includes(S.year) ? S.year : ys[ys.length - 1]; store.set('budget.year', S.year); }
@@ -2034,7 +2128,7 @@ const ACTS = {
   editLine(t){ lineModal(t.dataset.c, t.dataset.l); }, addLine(t){ lineModal(t.dataset.c); },
   import(){ $('#fileIn').click(); }, export: exportModal,
   ai: askClaude,
-  insEdit(t){ insEditModal(t.dataset.l); }, editQuote(t){ quoteModal(t.dataset.id); }, useQuote(t){ const q = S.quotes[t.dataset.id]; policyModal({replace: q.lineId, company: q.company, price: Math.round(q.yearly / 12), deductible: q.deductible, quote: q.id}); },
+  insEdit(t){ insEditModal(t.dataset.l); }, editQuote(t){ quoteModal(t.dataset.id); }, useQuote(t){ const q = S.quotes[t.dataset.id]; policyModal({replace: q.lineId, company: q.company, price: Math.round(q.yearly / 12 + (+q.monthlyFee || 0)), deductible: q.deductible, quote: q.id}); },
   policy(t){ policyModal({replace: t.dataset.l != null ? t.dataset.l : ''}); },
   syncReview: syncReviewModal,
   gotoYearReview(t){ S.year = t.dataset.y; store.set('budget.year', S.year); S.tab = 'budget'; history.replaceState(null, '', '#budget'); render(); syncReviewModal(); },
@@ -2051,6 +2145,7 @@ const ACTS = {
   },
   delSv(t){ delete S.sv.items[t.dataset.id]; saveSv(); render(); },
   applyRaise: raiseModal,
+  revOpen(){ reviewModal(); }, revSnooze(){ snoozeModal(); }, revSetSwitch(){ setSwitchModal(); },
   csv(){ $('#csvIn').click(); },
   goalEdit(t){ goalModal(t.dataset.l); },
   async openDoc(t){ const d = ((S.docs.lines || {})[t.dataset.l] || [])[+t.dataset.i]; if (!d || !S.assets || !S.assets.resolve) return; try { const url = await S.assets.resolve(d.id); const a = document.createElement('a'); a.href = url; a.download = d.name; document.body.appendChild(a); a.click(); a.remove(); } catch (e){ toast('Kunne ikke hente dokumentet'); } },

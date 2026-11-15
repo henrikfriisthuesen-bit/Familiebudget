@@ -1245,6 +1245,12 @@ function payTerms(l){ const m = (S.ins.lines || {})[l.id] || {}; if (m.terms) re
   if (n >= 2 && idx.every((v, i) => !i || v === idx[i - 1] + 1)) return {t: 'Månedlig', inf: true};
   return {t: n >= 11 ? 'Månedlig' : n >= 4 ? 'Kvartalsvis' : n >= 2 ? 'Halvårlig' : 'Årlig', inf: true}; }
 const isMonthly = t => /m(å|aa)nedlig/i.test(t || '');
+const VIA = {selskab: 'Forsikringsselskab', bank: 'Bank', pension: 'Pension'};
+function viaOf(l){ const m = (S.ins.lines || {})[l.id] || {}; if (m.via) return m.via; const t = (l.name || '') + ' ' + (m.provider || '');
+  if (/danica|pension|pfa|velliv|sampension|industriens|akademiker ?pension|lærernes|pka\b|topdanmark liv/i.test(t)) return 'pension';
+  if (/\bbank|banken|nykredit|jyske|nordea|danske bank|realkredit|totalkredit|spar nord|sydbank|arbejdernes/i.test(t)) return 'bank'; return 'selskab'; }
+const needsMonthly = l => viaOf(l) === 'selskab';
+const monthlyIssue = l => { const pt = payTerms(l); return needsMonthly(l) && pt.t && !isMonthly(pt.t); };
 function nextRenewal(m){ if (!m || !m.renewal) return null; const now = new Date(); let rd = new Date(now.getFullYear(), +m.renewal - 1, 1); if (rd < now) rd = new Date(now.getFullYear() + 1, +m.renewal - 1, 1); return rd; }
 function reviewCard(){
   const st = reviewState(), r = S.insrev || {};
@@ -1254,7 +1260,7 @@ function reviewCard(){
   else body = `<p style="margin:0">${r.lastSwitch ? 'Seneste skift: <b>' + dkDate(r.lastSwitch) + '</b> · ' : ''}Næste gennemgang: <b>${dkDate(st.due)}</b>${r.snoozedUntil ? ` <span class="badge warn">udsat (senest ${dkDate(st.max)})</span>` : ''}${st.isDue ? ' <span class="badge crit">⚠ nu</span>' : ` <span class="muted">(om ${st.daysLeft > 60 ? Math.round(st.daysLeft / 30.4) + ' måneder' : st.daysLeft + ' dage'})</span>`}</p>
     <div class="toolbar" style="margin:10px 0 0"><button class="btn small ${st.isDue ? 'primary' : ''}" data-act="revOpen">${st.isDue ? 'Start gennemgang' : 'Gennemgå nu'}</button>${st.isDue && st.canSnooze ? '<button class="btn small" data-act="revSnooze">Udsæt</button>' : ''}<button class="btn small ghost" data-act="revSetSwitch">Ret dato for skift</button></div>`;
   const rv = S.review && S.review.text ? `<details class="fold" style="margin-top:10px"><summary>Seneste gennemgang fra Claude (${esc(dkDate(S.review.date))})</summary><div class="ai" style="margin-top:6px">${md(S.review.text)}</div></details>` : '';
-  return `<div class="card"><h2>Forsikringsgennemgang <span class="hint">hvert ${REVIEW_YEARS}. år efter skift · altid månedlig betaling</span></h2>${body}${rv}</div>`;
+  return `<div class="card"><h2>Forsikringsgennemgang <span class="hint">hvert ${REVIEW_YEARS}. år efter skift · månedlig betaling hos forsikringsselskaber</span></h2>${body}${rv}</div>`;
 }
 function setSwitchModal(){
   const r = S.insrev || {};
@@ -1275,20 +1281,20 @@ function snoozeModal(){
 }
 function reviewPackage(){
   const b = B(), L = insLines(b).filter(({l}) => sum(l.amounts) || ((S.ins.lines || {})[l.id] || {}).provider);
-  let t = `Forsikringsgennemgang for familien (${dkDate(todayStr())}). Krav: alle forsikringer skal kunne betales månedligt.\n\n`;
+  let t = `Forsikringsgennemgang for familien (${dkDate(todayStr())}). Krav: forsikringer i forsikringsselskaber skal kunne betales månedligt. Forsikringer gennem bank og pension beholdes som de er (fx årlig betaling).\n\n`;
   L.forEach(({l}) => { const m = (S.ins.lines || {})[l.id] || {}, p = insPrice(l), rd = nextRenewal(m);
-    t += `• ${l.name}: ${m.provider || 'selskab ukendt'}, ${fmt(Math.round(p.now / 12))} kr/md (${fmt(p.now)} kr/år)${m.deductible ? ', selvrisiko ' + m.deductible : ''}${rd ? ', hovedforfald ' + rd.getDate() + '. ' + MONL[rd.getMonth()] + ' ' + rd.getFullYear() : ''}, betaling: ${payTerms(l).t || 'ukendt'}.\n  Dækning: ${m.coverage || '–'}\n`; });
+    t += `• ${l.name}: ${m.provider || 'selskab ukendt'}, ${fmt(Math.round(p.now / 12))} kr/md (${fmt(p.now)} kr/år)${m.deductible ? ', selvrisiko ' + m.deductible : ''}${rd ? ', hovedforfald ' + rd.getDate() + '. ' + MONL[rd.getMonth()] + ' ' + rd.getFullYear() : ''}, betaling: ${payTerms(l).t || 'ukendt'}${needsMonthly(l) ? '' : ' (via ' + VIA[viaOf(l)].toLowerCase() + ' – beholdes, undtaget kravet om månedlig betaling)'}.\n  Dækning: ${m.coverage || '–'}\n`; });
   const qs = Object.values(S.quotes || {}).filter(q => q.status !== 'afvist'); if (qs.length){ t += `\nModtagne tilbud:\n`; qs.forEach(q => { const ln = findLineIn(b, q.lineId); t += `• ${q.company} – ${ln ? ln.l.name : ''}: ${fmt(q.yearly)} kr/år, månedlig betaling: ${q.monthly || 'ukendt'}${q.monthlyFee ? ' (gebyr ' + q.monthlyFee + ' kr/md)' : ''}\n`; }); }
   return t;
 }
 function reviewModal(){
   const b = B(), L = insLines(b).filter(({l}) => sum(l.amounts) || ((S.ins.lines || {})[l.id] || {}).provider), st = reviewState(), now = new Date();
-  const notMon = L.filter(({l}) => { const pt = payTerms(l); return pt.t && !isMonthly(pt.t); });
+  const notMon = L.filter(({l}) => monthlyIssue(l));
   const rows = L.map(({l}) => { const m = (S.ins.lines || {})[l.id] || {}, p = insPrice(l), rd = nextRenewal(m), dl = rd ? new Date(rd.getTime() - 30 * 864e5) : null, docs = ((S.docs.lines || {})[l.id] || []).length;
     return `<tr><td><b>${esc(l.name)}</b><div class="muted" style="font-size:12px;white-space:normal;max-width:360px">${esc(m.coverage || 'Dækning ikke angivet')}</div></td><td>${esc(m.provider || '–')}</td><td class="num">${fmt(Math.round(p.now / 12))}/md<div class="muted" style="font-size:12px">${fmt(p.now)}/år</div></td><td>${esc(m.deductible || '–')}</td>
       <td>${rd ? `${rd.getDate()}. ${MONL[rd.getMonth()]} ${rd.getFullYear()}<div class="muted" style="font-size:12px">${dl > now ? 'opsig senest ' + dl.getDate() + '. ' + MONL[dl.getMonth()] : 'kort varsel mod gebyr'}</div>` : '–'}</td>
-      <td>${(pt => isMonthly(pt.t) ? '<span class="st-good">✓ Månedlig</span>' : pt.t ? `<span class="st-crit">⚠ ${esc(pt.t)}</span><div class="muted" style="font-size:12px">skift til månedlig</div>` : '<span class="muted">?</span>')(payTerms(l))}</td><td>${docs ? '📎 ' + docs : ''}</td></tr>`; }).join('');
-  openModal(`<h2>Forsikringsgennemgang</h2><p class="muted" style="margin:0 0 10px">${st && st.r.lastSwitch ? `${REVIEW_YEARS} år siden skiftet ${dkDate(st.r.lastSwitch)}. ` : ''}Gennemgå dækning, betingelser og priser – og husk, at alle forsikringer skal kunne betales månedligt.</p>
+      <td>${(pt => !needsMonthly(l) ? `${esc(pt.t || '–')}<div class="muted" style="font-size:12px">via ${VIA[viaOf(l)].toLowerCase()} – beholdes</div>` : isMonthly(pt.t) ? '<span class="st-good">✓ Månedlig</span>' : pt.t ? `<span class="st-crit">⚠ ${esc(pt.t)}</span><div class="muted" style="font-size:12px">skift til månedlig</div>` : '<span class="muted">?</span>')(payTerms(l))}</td><td>${docs ? '📎 ' + docs : ''}</td></tr>`; }).join('');
+  openModal(`<h2>Forsikringsgennemgang</h2><p class="muted" style="margin:0 0 10px">${st && st.r.lastSwitch ? `${REVIEW_YEARS} år siden skiftet ${dkDate(st.r.lastSwitch)}. ` : ''}Gennemgå dækning, betingelser og priser – og husk, at forsikringer i forsikringsselskaber skal kunne betales månedligt. Forsikringer gennem bank og pension beholdes.</p>
     <div class="tscroll"><table class="t" style="font-size:13px"><thead><tr><th>Police</th><th style="text-align:left">Selskab</th><th>Pris</th><th style="text-align:left">Selvrisiko</th><th style="text-align:left">Hovedforfald</th><th style="text-align:left">Betaling</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
     ${notMon.length ? `<p class="st-crit" style="margin:10px 0 0">⚠ Betales ikke månedligt i dag: ${notMon.map(({l}) => esc(l.name)).join(', ')}. Bed selskabet om at lægge dem om til månedlig betaling.</p>` : ''}
     <div class="box"><h4>Tjekliste</h4><ul style="margin:0;padding-left:20px;font-size:14px;color:var(--ink-2)">
@@ -1300,11 +1306,11 @@ function reviewModal(){
     ${S.sample ? `<div class="box"><h4>Claudes vurdering</h4><p class="muted" style="margin:0 0 8px;font-size:13px">Claude gennemgår policer, betingelser og priser og foreslår, hvad I bør gøre.</p><button class="btn small primary" data-act="revAI">Få Claudes gennemgang</button><div class="ai" id="revOut" style="margin-top:8px">${S.review && S.review.text ? md(S.review.text) : ''}</div></div>` : ''}
     <div class="acts"><button class="btn" data-act="revCopy">Kopiér til Claude</button><a class="btn" href="#forsikringer" data-act="close">Indhent tilbud</a><span class="sp"></span>${st && st.isDue && st.canSnooze ? '<button class="btn" data-act="revSnooze2">Udsæt</button>' : ''}<button class="btn" data-act="revKeep">Behold – næste om 1 år</button><button class="btn" data-act="close">Luk</button></div>`, () => {
     MODAL_ACTS = {
-      async revCopy(){ try { await navigator.clipboard.writeText(reviewPackage() + '\nGennemgå venligst policer, betingelser og priser, sammenlign med andre selskaber, og giv en anbefaling. Krav: månedlig betaling.'); toast('Kopieret – indsæt i en samtale med Claude'); } catch (e){ toast('Kunne ikke kopiere'); } },
+      async revCopy(){ try { await navigator.clipboard.writeText(reviewPackage() + '\nGennemgå venligst policer, betingelser og priser, sammenlign med andre selskaber, og giv en anbefaling. Krav: månedlig betaling for forsikringer i forsikringsselskaber; forsikringer gennem bank og pension beholdes.'); toast('Kopieret – indsæt i en samtale med Claude'); } catch (e){ toast('Kunne ikke kopiere'); } },
       revSnooze2(){ closeModal(); snoozeModal(); },
       revKeep(){ const d = addMonthsStr(todayStr(), 12); S.insrev = Object.assign({}, S.insrev, {nextReview: d, snoozedUntil: null, history: ((S.insrev || {}).history || []).concat({type: 'gennemgået', date: todayStr()})}); saveInsrev(); closeModal(); render(); toast('Næste gennemgang ' + dkDate(d)); },
       async revAI(btn){ if (!S.sample) return; btn.disabled = true; btn.textContent = 'Claude gennemgår…'; const out = $('#revOut');
-        const prompt = `Du er en uvildig dansk forsikringsrådgiver. Gennemgå familiens forsikringer nedenfor: dækning, selvrisiko, betingelser og priser. Vurdér prisniveauet i forhold til det danske marked, peg på dobbeltdækning, over- eller underforsikring og ting der bør justeres, og giv en prioriteret liste med 5-8 konkrete handlinger med estimeret besparelse i kr/år hvor muligt. Krav: alle forsikringer skal kunne betales månedligt – fremhæv hvis noget ikke opfylder det. Nævn frister (opsigelse senest 30 dage før hovedforfald). Svar på dansk som punktliste med fede overskrifter. Vær ærlig om usikkerhed.\n\n${reviewPackage()}`;
+        const prompt = `Du er en uvildig dansk forsikringsrådgiver. Gennemgå familiens forsikringer nedenfor: dækning, selvrisiko, betingelser og priser. Vurdér prisniveauet i forhold til det danske marked, peg på dobbeltdækning, over- eller underforsikring og ting der bør justeres, og giv en prioriteret liste med 5-8 konkrete handlinger med estimeret besparelse i kr/år hvor muligt. Krav: forsikringer i forsikringsselskaber skal kunne betales månedligt – fremhæv hvis en af dem ikke opfylder det. Forsikringer gennem bank og pension skal beholdes som de er (også årlig betaling) – foreslå ikke at skifte eller omlægge dem. Nævn frister (opsigelse senest 30 dage før hovedforfald). Svar på dansk som punktliste med fede overskrifter. Vær ærlig om usikkerhed.\n\n${reviewPackage()}`;
         try { const r = await S.sample(prompt, {modelTier: 'complex', onText: ({text}) => { if (out) out.innerHTML = md(text); }}); S.review = {date: todayStr(), text: r.text, by: 'app'}; saveReview(); toast('Gennemgangen er gemt ✓'); }
         catch (e){ if (out) out.innerHTML = '<p class="st-crit">Claude kunne ikke svare lige nu – prøv igen senere.</p>'; }
         btn.disabled = false; btn.textContent = 'Få Claudes gennemgang igen'; }
@@ -1695,7 +1701,7 @@ function vInsurance(){
   <div class="card"><div style="display:flex;align-items:center;gap:8px;margin-bottom:12px"><h2 style="margin:0;flex:1">Jeres policer</h2><button class="btn small primary" data-act="policy">+ Ny / skift forsikring</button></div><div class="tscroll"><table class="t ins"><thead><tr><th>Forsikring</th><th>Budget ${esc(S.year)}</th><th>Ny årspris</th><th>Pr. md.</th><th>Ændring</th><th>Bedste tilbud</th><th></th></tr></thead><tbody>
   ${L.map(({l}) => { const p = insPrice(l), m = S.ins.lines[l.id] || {}, q = best[l.id];
     const d = q ? p.now - q.yearly : 0;
-    return `<tr><td><b>${esc(l.name)}</b><span class="p">${esc(m.provider || 'Selskab ikke angivet')}${m.renewal ? ' · hovedforfald ' + MONL[+m.renewal - 1] : ''}${(pt => pt.t && !isMonthly(pt.t) ? ' · <span class="st-crit">⚠ ' + esc(pt.t) + ' betaling – skal være månedlig</span>' : '')(payTerms(l))}</span></td>
+    return `<tr><td><b>${esc(l.name)}</b><span class="p">${esc(m.provider || 'Selskab ikke angivet')}${m.renewal ? ' · hovedforfald ' + MONL[+m.renewal - 1] : ''}${monthlyIssue(l) ? ' · <span class="st-crit">⚠ ' + esc(payTerms(l).t) + ' betaling – skal være månedlig</span>' : !needsMonthly(l) ? ' · via ' + VIA[viaOf(l)].toLowerCase() : ''}</span></td>
       <td class="num">${fmt(p.budget)}</td><td class="num">${fmt(p.now)}${p.next ? `<span class="p">fra ${p.next.year || 'næste år'}</span>` : ''}</td><td class="num">${p.next ? fmt(p.next.monthly) : '–'}</td><td class="num">${Math.abs(p.change) >= 0.5 && p.n >= 4 ? (p.change > 0 ? '▲ ' : '▼ ') + pct(p.change) : '–'}</td>
       <td class="num">${q ? fmt(q.yearly) + `<span class="p">${esc(q.company)}${d > 0 ? ' · spar ' + fmt(d) : ''}</span>` : '<span class="muted">–</span>'}</td>
       <td><button class="btn small" data-act="insEdit" data-l="${l.id}">Detaljer</button></td></tr>`; }).join('')}
@@ -1753,7 +1759,7 @@ function vInsurance(){
   return h;
 }
 function refreshGen(){ const g = $('#genText'); if (!g) return; const t = quoteText(); g.value = t; const ml = $('#mailLink'); if (ml) ml.href = 'mailto:?subject=' + encodeURIComponent('Anmodning om tilbud på forsikringer') + '&body=' + encodeURIComponent(t); }
-const defSel = l => !/bank|livsforsikring|gebyr|sundhed|danica/i.test(l.name);
+const defSel = l => needsMonthly(l) && !/bank|livsforsikring|gebyr|sundhed|danica/i.test(l.name);
 const isSel = l => S.qsel ? S.qsel.has(l.id) : defSel(l);
 function hhField(k, label, ph){ return `<label class="field">${label}<input class="inp" data-hh="${k}" value="${esc(S.hh[k] || '')}" placeholder="${esc(ph)}"></label>`; }
 function quoteText(){
@@ -1778,7 +1784,9 @@ function insEditModal(lid){
     <label class="field">Hovedforfald (måned)<select class="inp" id="imRen"><option value="">Ved ikke</option>${MONL.map((x, i) => `<option value="${i + 1}" ${+m.renewal === i + 1 ? 'selected' : ''}>${x}</option>`).join('')}</select></label></div>
     <div class="row2" style="margin-top:10px"><label class="field">Policenummer<input class="inp" id="imPol" value="${esc(m.policy || '')}"></label>
     <label class="field">Selvrisiko<input class="inp" id="imDed" value="${esc(m.deductible || '')}" placeholder="fx 5.000 kr"></label></div>
-    <label class="field" style="margin-top:10px;max-width:260px">Betaling (krav: månedlig)<select class="inp" id="imTerms">${['Månedlig', 'Kvartalsvis', 'Halvårlig', 'Årlig'].map(x => `<option ${(m.terms || payTerms(l).t || 'Månedlig') === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
+    <div class="row2" style="margin-top:10px"><label class="field">Gennem<select class="inp" id="imVia">${Object.entries(VIA).map(([k, v]) => `<option value="${k}" ${viaOf(l) === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+    <label class="field">Betaling<select class="inp" id="imTerms">${['Månedlig', 'Kvartalsvis', 'Halvårlig', 'Årlig'].map(x => `<option ${(m.terms || payTerms(l).t || 'Månedlig') === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label></div>
+    <p class="muted" style="margin:6px 0 0;font-size:13px">Krav om månedlig betaling gælder kun forsikringsselskaber. Forsikringer gennem bank og pension beholdes som de er.</p>
     <div class="row2" style="margin-top:10px"><label class="field">Ny pris (kr/md)<input class="inp num" id="imNext" inputmode="decimal" value="${m.nextPrice ? fmt(m.nextPrice) : (p.next ? fmt(p.next.monthly) : '')}" placeholder="fx 477"></label>
     <label class="field">Gælder fra år<input class="inp num" id="imNextY" inputmode="numeric" value="${esc(m.nextYear || (p.next && p.next.year) || '')}" placeholder="fx 2027"></label></div>
     <label class="field" style="margin-top:10px">Dækning (bruges i tilbudsforespørgslen)<textarea class="inp" id="imCov" placeholder="fx Kasko, vejhjælp, glas…" style="min-height:110px">${esc(m.coverage || '')}</textarea></label>
@@ -1786,7 +1794,7 @@ function insEditModal(lid){
     <datalist id="insList">${INSURERS.map(x => `<option value="${x[0]}">`).join('')}</datalist>
     ${docsHtml(lid)}
     <div class="acts"><button class="btn" data-act="imPolicy">Ny pris / nyt selskab…</button><span class="sp"></span><button class="btn" data-act="close">Annuller</button><button class="btn primary" data-act="imSave">Gem</button></div>`, () => {
-    MODAL_ACTS = { imPolicy(){ closeModal(); policyModal({replace: lid}); }, imSave(){ S.ins.lines[lid] = Object.assign({}, m, {provider: $('#imProv').value.trim(), renewal: $('#imRen').value, policy: $('#imPol').value.trim(), deductible: $('#imDed').value.trim(), coverage: $('#imCov').value.trim(), nextPrice: parseNum($('#imNext').value) || null, nextYear: parseNum($('#imNextY').value) || null, terms: $('#imTerms').value}); saveIns(); closeModal(); render(); } };
+    MODAL_ACTS = { imPolicy(){ closeModal(); policyModal({replace: lid}); }, imSave(){ S.ins.lines[lid] = Object.assign({}, m, {provider: $('#imProv').value.trim(), renewal: $('#imRen').value, policy: $('#imPol').value.trim(), deductible: $('#imDed').value.trim(), coverage: $('#imCov').value.trim(), nextPrice: parseNum($('#imNext').value) || null, nextYear: parseNum($('#imNextY').value) || null, terms: $('#imTerms').value, via: $('#imVia').value}); saveIns(); closeModal(); render(); } };
   });
 }
 function quoteModal(id){

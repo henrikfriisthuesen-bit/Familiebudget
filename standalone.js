@@ -184,21 +184,22 @@
     css.textContent = `.syncbtn{gap:6px}.syncbtn.err{color:var(--crit-ink);border-color:var(--crit)}.syncbtn.off{color:var(--ink-3)}
       @media (max-width:899px){.syncbtn .sb-t{display:none}.top .sync{display:none}}
       #syncModal{position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.38);display:flex;align-items:center;justify-content:center;padding:20px}
-      #syncModal .sheet{max-width:560px}#syncModal ol{padding-left:20px;margin:6px 0;color:var(--ink-2);font-size:13.5px}#syncModal li{margin:3px 0}
+      #syncModal .sheet{max-width:560px;margin:0}#syncModal ol{padding-left:20px;margin:6px 0;color:var(--ink-2);font-size:13.5px}#syncModal li{margin:3px 0}
       @media (max-width:640px){#syncModal{align-items:flex-end;padding:0}}`;
     document.head.appendChild(css); ui();
   }
   function openSetup(){
     const c = Sync.cfg || { owner: '', repo: 'familiebudget-data', branch: 'main', path: 'budget-data.json', token: '' };
     const m = document.createElement('div'); m.id = 'syncModal';
-    m.innerHTML = `<div class="sheet" role="dialog" aria-modal="true"><h2>Synk mellem mobil og PC</h2>
+    m.innerHTML = `<form class="sheet" id="sgForm" role="dialog" aria-modal="true" autocomplete="on" action="#" method="post"><h2>Synk mellem mobil og PC</h2>
+      ${storageOK() ? '' : '<div class="banner err">Browseren må ikke gemme data for denne side, så indstillingerne glemmes, når appen lukkes. Tillad cookies/webstedsdata for henrikfriisthuesen-bit.github.io i browserens indstillinger.</div>'}
       <p class="muted" style="margin:0 0 10px">Budgettet gemmes altid på denne enhed. Med synk gemmes det også i en <b>privat</b> fil på GitHub, så I ser de samme tal på alle enheder.</p>
       ${Sync.status === 'error' ? `<div class="banner err">${esc(Sync.msg)}</div>` : Sync.status === 'empty' ? `<div class="banner err">Forbindelsen virker, men ${esc(Sync.msg)} Upload <b>budget-data.json</b> til roden af repoet – eller luk dette vindue, tryk <b>Gendan fra sikkerhedskopi</b> og vælg filen. Så sendes den automatisk til GitHub.</div>` : Sync.cfg ? `<div class="banner">${esc(label()[1])}</div>` : ''}
-      <div class="row2"><label class="field">GitHub-brugernavn<input class="inp" id="sgOwner" value="${esc(c.owner)}" autocapitalize="off" autocorrect="off"></label>
+      <div class="row2"><label class="field">GitHub-brugernavn<input class="inp" id="sgOwner" name="username" autocomplete="username" value="${esc(c.owner)}" autocapitalize="off" autocorrect="off"></label>
       <label class="field">Privat data-repo<input class="inp" id="sgRepo" value="${esc(c.repo)}" autocapitalize="off" autocorrect="off"></label></div>
       <div class="row2" style="margin-top:8px"><label class="field">Gren<input class="inp" id="sgBranch" value="${esc(c.branch)}" autocapitalize="off"></label>
       <label class="field">Filnavn<input class="inp" id="sgPath" value="${esc(c.path)}" autocapitalize="off"></label></div>
-      <label class="field" style="margin-top:8px">Adgangsnøgle (fine-grained token)<input class="inp" id="sgToken" type="password" value="${esc(c.token)}" autocomplete="off" placeholder="github_pat_…"></label>
+      <label class="field" style="margin-top:8px">Adgangsnøgle (fine-grained token)<input class="inp" id="sgToken" name="password" type="password" value="${esc(c.token)}" autocomplete="current-password" placeholder="github_pat_…"></label>
       <details class="fold" style="margin-top:10px"><summary>Sådan laver du nøglen</summary><ol>
         <li>Opret et <b>privat</b> repo på GitHub, fx <i>familiebudget-data</i> (sæt flueben i “Add a README”).</li>
         <li>Gå til GitHub → Settings → Developer settings → Personal access tokens → <b>Fine-grained tokens</b> → Generate new token.</li>
@@ -206,26 +207,29 @@
         <li>Permissions → Repository → <b>Contents: Read and write</b>. Vælg en udløbsdato (fx 1 år).</li>
         <li>Kopiér nøglen og indsæt den her. Gør det samme på mobil, PC og Majbrits telefon.</li></ol>
         <p class="muted" style="font-size:12.5px">Nøglen gemmes kun i denne browser og sendes kun til GitHub.</p></details>
-      <div class="acts">${Sync.cfg ? '<button class="btn danger" id="sgOff">Slå synk fra</button>' : ''}<span class="sp"></span><button class="btn" id="sgClose">Luk</button>${Sync.cfg ? '<button class="btn" id="sgNow">Synk nu</button>' : ''}<button class="btn primary" id="sgSave">Gem og synk</button></div></div>`;
+      <p class="muted" style="font-size:12.5px;margin:8px 0 0">Tip: Når du trykker “Gem og synk”, tilbyder browseren at gemme brugernavn og nøgle som en adgangskode. Så udfyldes de automatisk næste gang.</p>
+      <div class="acts">${Sync.cfg ? '<button type="button" class="btn danger" id="sgOff">Slå synk fra</button>' : ''}<span class="sp"></span><button type="button" class="btn" id="sgClose">Luk</button>${Sync.cfg ? '<button type="button" class="btn" id="sgNow">Synk nu</button>' : ''}<button type="submit" class="btn primary" id="sgSave">Gem og synk</button></div></form>`;
     document.body.appendChild(m);
     const close = () => m.remove();
     m.addEventListener('mousedown', e => { if (e.target === m) close(); });
     m.querySelector('#sgClose').onclick = close;
     const off = m.querySelector('#sgOff'); if (off) off.onclick = () => { Sync.save(null); close(); };
     const now = m.querySelector('#sgNow'); if (now) now.onclick = async () => { close(); await Sync.run(); };
-    m.querySelector('#sgSave').onclick = async () => {
+    m.querySelector('#sgForm').onsubmit = async ev => { ev.preventDefault();
       const v = id => m.querySelector(id).value.trim();
       const cfg = { owner: v('#sgOwner'), repo: v('#sgRepo'), branch: v('#sgBranch') || 'main', path: v('#sgPath') || 'budget-data.json', token: v('#sgToken') };
       if (!cfg.owner || !cfg.repo || !cfg.token){ alertIn(m, 'Udfyld brugernavn, repo og nøgle.'); return; }
-      Sync.save(cfg); m.querySelector('#sgSave').textContent = 'Forbinder…';
+      Sync.save(cfg); askPersist(); m.querySelector('#sgSave').textContent = 'Forbinder…';
       await Sync.run();
       if (Sync.status === 'error'){ m.querySelector('#sgSave').textContent = 'Gem og synk'; alertIn(m, Sync.msg); } else close();
     };
   }
+  function storageOK(){ const k = 'familiebudget.probe'; if (!lsSet(k, '1')) return false; const ok = lsGet(k) === '1'; try { localStorage.removeItem(k); } catch (e) {} return ok; }
+  function askPersist(){ try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch (e) {} }
   function alertIn(m, text){ let b = m.querySelector('.banner'); if (!b){ b = document.createElement('div'); m.querySelector('h2').after(b); } b.className = 'banner err'; b.textContent = text; }
 
   document.addEventListener('click', e => { if (e.target.closest('[data-act="syncSetup"]')){ e.preventDefault(); openSetup(); } });
-  Sync.load();
+  Sync.load(); if (Sync.cfg) askPersist();
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', addButton); else addButton();
   window.addEventListener('online', () => Sync.run());
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') Sync.run(); else if (st.pending && Sync.cfg) Sync.run(); });

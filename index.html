@@ -692,6 +692,7 @@ function vBudget(){
     <span class="badge">Saldo ultimo dec. <b class="num" data-tot="endBal">${kr(c.endBal)}</b></span>
     <span style="flex:1"></span>
     <button class="btn small" data-act="newPost">+ Ny post</button>
+    <button class="btn small" data-act="known" title="Notér kendte prisstigninger til næste år">↗ Priser ${+S.year + 1}${(n => n ? ' (' + n + ')' : '')(allLines(b).filter(({l}) => knownChange(l, +S.year + 1)).length)}</button>
     <button class="btn small" data-act="addCat">+ Kategori</button>
     <button class="btn small" data-act="import">Importér Excel</button>
     <button class="btn small" data-act="backup">Sikkerhedskopi</button>
@@ -713,7 +714,7 @@ function budgetList(b){
     if (!mobile){
       h += `<div class="tscroll" style="margin:0;padding:0"><table class="g"><thead><tr><th>Post</th>${MON.map((m, i) => `<th class="${isRec(b, i) ? 'rch' : ''}" title="${isRec(b, i) ? 'Afstemt' : ''}">${m}${isRec(b, i) ? ' ✓' : ''}</th>`).join('')}<th>I alt</th><th></th></tr></thead><tbody>`;
       for (const l of lines){
-        h += `<tr><td class="nm"><button class="lname" data-act="editLine" data-c="${cat.id}" data-l="${l.id}"><span class="t">${esc(l.name)}</span>${l.oneOff ? '<span class="flag">engang</span>' : ''}${l.note ? '<span class="flag" title="' + esc(l.note) + '">note</span>' : ''}${((S.docs.lines || {})[l.id] || []).length ? '<span class="flag" title="Dokumenter">📎</span>' : ''}</button></td>
+        h += `<tr><td class="nm"><button class="lname" data-act="editLine" data-c="${cat.id}" data-l="${l.id}"><span class="t">${esc(l.name)}</span>${l.oneOff ? '<span class="flag">engang</span>' : ''}${knownChange(l, +S.year + 1) ? '<span class="flag" title="' + esc(knownLabel(l.next)) + '">↗ ' + (+S.year + 1) + '</span>' : ''}${l.note ? '<span class="flag" title="' + esc(l.note) + '">note</span>' : ''}${((S.docs.lines || {})[l.id] || []).length ? '<span class="flag" title="Dokumenter">📎</span>' : ''}</button></td>
           ${l.amounts.map((v, m) => { const pl = l.plan && l.plan[m] != null && +l.plan[m] !== +v ? l.plan[m] : null; return `<td class="${isRec(b, m) ? 'rcc' : ''}"><input class="cell ${pl != null ? 'dev' : ''}" inputmode="decimal" data-c="${cat.id}" data-l="${l.id}" data-m="${m}" value="${kr0(v)}" aria-label="${esc(l.name)} ${MONL[m]}" ${pl != null ? `title="Budget: ${fmt(pl)} · Faktisk: ${fmt(v)}"` : ''}></td>`; }).join('')}
           <td class="rt num" data-tot="l:${l.id}">${fmt(sum(l.amounts))}</td><td><button class="btn ghost small" data-act="bulk" data-c="${cat.id}" data-l="${l.id}" title="Ret flere måneder på én gang" aria-label="Ret flere måneder for ${esc(l.name)}">⇉</button></td></tr>`;
       }
@@ -723,7 +724,7 @@ function budgetList(b){
       for (const l of lines){
         const mx = Math.max(1, ...l.amounts.map(v => Math.abs(+v || 0)));
         const nzc = l.amounts.filter(v => +v).length;
-        h += `<button class="lrow" data-act="editLine" data-c="${cat.id}" data-l="${l.id}"><div class="nm"><div>${esc(l.name)}${l.oneOff ? ' <span class="flag">engang</span>' : ''}</div>
+        h += `<button class="lrow" data-act="editLine" data-c="${cat.id}" data-l="${l.id}"><div class="nm"><div>${esc(l.name)}${l.oneOff ? ' <span class="flag">engang</span>' : ''}${knownChange(l, +S.year + 1) ? ' <span class="flag">↗ ' + (+S.year + 1) + '</span>' : ''}</div>
           <div class="spark">${l.amounts.map(v => +v ? `<i style="height:${Math.max(2, Math.abs(v) / mx * 16)}px"></i>` : '<i class="z"></i>').join('')}</div></div>
           <div class="amt num">${kr(sum(l.amounts))}<small>${nzc === 12 ? fmt(l.amounts[11]) + ' /md' : nzc + ' betalinger'}</small></div></button>`;
       }
@@ -789,6 +790,39 @@ document.addEventListener('keydown', e => {
 });
 
 /* line editor */
+function knownBox(l){
+  const ny = +S.year + 1, kn = l.next && +l.next.year === ny ? l.next : null, np = nextPrice(l, ny);
+  return `<details class="fold box" ${kn ? 'open' : ''}><summary><b>Kendt prisændring i ${ny}</b>${kn ? ' · ' + esc(knownLabel(kn)) : ''}</summary>
+    <p class="muted" style="margin:6px 0 8px;font-size:13px">Bruges automatisk, når budget ${ny} oprettes${S.years[String(ny)] && S.years[String(ny)].linked ? ' – og ' + ny + ' opdateres allerede nu' : ''}.${np && !kn ? ' Fra ' + (np.src === 'note' ? 'note' : 'police') + ': ' + fmt(np.monthly) + ' kr pr. betaling.' : ''}</p>
+    <div class="row3"><label class="field">Type<select class="inp" id="knKind"><option value="">Ingen</option><option value="amt" ${kn && kn.kind !== 'pct' ? 'selected' : ''}>Nyt beløb pr. betaling</option><option value="pct" ${kn && kn.kind === 'pct' ? 'selected' : ''}>Stigning i %</option></select></label>
+    <label class="field">Beløb / %<input class="inp num" id="knVal" inputmode="decimal" value="${kn ? String(kn.val).replace('.', ',') : ''}" placeholder="fx 459 eller 3,5"></label>
+    <label class="field">Fra måned<select class="inp" id="knFrom">${MONL.map((m, k) => `<option value="${k + 1}" ${kn && +kn.from === k + 1 ? 'selected' : ''}>${m}</option>`).join('')}</select></label></div></details>`;
+}
+function setKnown(l, kind, val, from){
+  const v = parseNum(val);
+  if (!kind || !String(val).trim() || isNaN(v)) { delete l.next; return; }
+  l.next = {year: +S.year + 1, kind, val: v, from: +from || 1};
+}
+function knownModal(){
+  const b = B(), ny = +S.year + 1; let q = '';
+  const rows = () => allLines(b, (l, c) => c.type !== 'savings' || true).filter(({l, c}) => !resetsYearly(c) || isFixedPost(l)).filter(({l, c}) => !q || norm(l.name + ' ' + c.name).includes(norm(q)));
+  const draw = () => { $('#knBody').innerHTML = rows().map(({l, c}) => { const kn = l.next && +l.next.year === ny ? l.next : null, np = nextPrice(l, ny), i = info(l);
+    return `<tr data-kl="${l.id}"><td><b>${esc(l.name)}</b><div class="muted" style="font-size:12px">${esc(c.name)} · nu ${fmt(i.last)} kr${np && !kn ? ` · <span title="Bruges hvis du ikke skriver andet">${np.src === 'note' ? 'note' : 'police'}: ${fmt(np.monthly)}</span>` : ''}</div></td>
+      <td><select class="inp" data-k="kind" style="min-width:150px"><option value="">–</option><option value="amt" ${kn && kn.kind !== 'pct' ? 'selected' : ''}>Nyt beløb</option><option value="pct" ${kn && kn.kind === 'pct' ? 'selected' : ''}>Stigning %</option></select></td>
+      <td><input class="inp num" data-k="val" inputmode="decimal" style="width:100px" value="${kn ? String(kn.val).replace('.', ',') : ''}"></td>
+      <td><select class="inp" data-k="from">${MONL.map((m, k) => `<option value="${k + 1}" ${kn && +kn.from === k + 1 ? 'selected' : ''}>${m.slice(0, 3)}</option>`).join('')}</select></td></tr>`; }).join(''); };
+  openModal(`<h2>Kendte prisændringer i ${ny}</h2><p class="muted" style="margin:0 0 10px">Skriv nye priser eller stigninger, så snart I kender dem (fx brev fra forsikring, el, abonnementer, løn). De bruges automatisk, når budget ${ny} oprettes${S.years[String(ny)] && S.years[String(ny)].linked ? ` – og det eksisterende ${ny}-budget opdateres med det samme` : ''}.</p>
+    <input class="inp" id="knQ" placeholder="Søg post…" style="margin-bottom:8px">
+    <div class="tscroll" style="max-height:55vh"><table class="t" style="font-size:13.5px"><thead><tr><th>Post</th><th style="text-align:left">Ændring</th><th style="text-align:left">Beløb / %</th><th style="text-align:left">Fra</th></tr></thead><tbody id="knBody"></tbody></table></div>
+    <p class="muted" style="font-size:12.5px;margin:8px 0 0">“Nyt beløb” er prisen pr. betaling (fx pr. måned). Ændringer fra en forsikringspolice eller note bruges automatisk, medmindre du skriver noget andet her.</p>
+    <div class="acts"><span class="sp"></span><button class="btn" data-act="close">Annuller</button><button class="btn primary" data-act="knSave">Gem</button></div>`, sheet => {
+    const collect = () => $$('#knBody tr', sheet).forEach(tr => { const hit = findLineIn(b, tr.dataset.kl); if (!hit) return; const g = k => tr.querySelector(`[data-k="${k}"]`).value; setKnown(hit.l, g('kind'), g('val'), g('from')); });
+    draw();
+    $('#knQ').addEventListener('input', e => { collect(); q = e.target.value; draw(); });
+    sheet.addEventListener('input', e => { const tr = e.target.closest('tr[data-kl]'); if (tr && e.target.dataset.k === 'val' && e.target.value.trim() && !tr.querySelector('[data-k="kind"]').value) tr.querySelector('[data-k="kind"]').value = /%/.test(e.target.value) ? 'pct' : 'amt'; });
+    MODAL_ACTS = { knSave(){ collect(); saveYear(); closeModal(); render(); const n = allLines(b).filter(({l}) => knownChange(l, ny)).length; toast(n ? `${n} kendte ændring${n > 1 ? 'er' : ''} til ${ny} gemt` : 'Gemt'); } };
+  }, true);
+}
 function lineModal(cid, lid){
   const cat = findCat(cid); const isNew = !lid;
   const l = isNew ? {id:'', name:'', amounts:Array(12).fill(0)} : findLine(cid, lid);
@@ -806,6 +840,7 @@ function lineModal(cid, lid){
     <label class="chk" style="margin-top:10px"><input type="checkbox" id="lmOne" ${l.oneOff ? 'checked' : ''}><span>Engangspost – nulstilles når næste års budget oprettes</span></label>
     <label class="chk"><input type="checkbox" id="lmKeep" ${l.keep ? 'checked' : ''}><span>Behold beløb præcis som i år ved nyt år (ingen automatisk justering)</span></label>
     ${resetsYearly(cat) ? `<label class="chk"><input type="checkbox" id="lmFixed" ${isFixedPost(l) ? 'checked' : ''}><span>Fast post i ${esc(cat.name)} – bevares med 0 kr ved nyt år (ellers fjernes den)</span></label>` : ''}
+    ${isNew ? '' : knownBox(l)}
     <label class="field" style="margin-top:8px">Note<textarea class="inp" id="lmNote" placeholder="fx aftalenr., hvornår prisen ændres…">${esc(l.note || '')}</textarea></label>
     ${isNew ? '' : docsHtml(l.id)}
     <div class="acts">${isNew ? '' : '<button class="btn danger" data-act="lmDelete">Slet post</button><button class="btn" data-act="lmBulk">⇉ Ret flere måneder</button>'}<span class="sp"></span><button class="btn" data-act="close">Annuller</button><button class="btn primary" data-act="lmSave">Gem</button></div>`,
@@ -829,6 +864,7 @@ function lineModal(cid, lid){
           const one = $('#lmOne').checked, keep = $('#lmKeep').checked, note = $('#lmNote').value.trim();
           one ? target.oneOff = true : delete target.oneOff; keep ? target.keep = true : delete target.keep; note ? target.note = note : delete target.note;
           if ($('#lmFixed')) target.keepInReset = $('#lmFixed').checked;
+          if ($('#knKind')) setKnown(target, $('#knKind').value, $('#knVal').value, $('#knFrom').value);
           if (isNew) cat.lines.push(target);
           saveYear(); closeModal(); render();
         }
@@ -1385,11 +1421,25 @@ function totalCard(b, c){
 }
 
 /* ---------- NEW YEAR ---------- */
+/* Kendte prisændringer: l.next = {year, kind: 'amt'|'pct', val, from: 1-12} */
+const knownChange = (l, y) => l.next && y && +l.next.year === +y && l.next.val !== '' && l.next.val != null && !isNaN(+l.next.val) && (l.next.kind !== 'pct' || +l.next.val !== 0) ? l.next : null;
+const knownLabel = kn => 'Kendt ændring: ' + (kn.kind === 'pct' ? (kn.val >= 0 ? '+' : '') + String(kn.val).replace('.', ',') + ' %' : fmt(kn.val) + ' kr pr. betaling') + ((+kn.from || 1) > 1 ? ' fra ' + MONL[+kn.from - 1] : '');
 function rollLine(l, cat, o){
   const i = info(l); let a = i.a.slice(); const notes = [];
   if (o.resetOneOff && l.oneOff) return {amounts: Array(12).fill(0), notes: ['Engangspost nulstillet']};
+  const kn = knownChange(l, o.year);
+  if (kn){
+    const base = rollLine(Object.assign({}, l, {next: null}), cat, Object.assign({}, o, {index: 0, skipNp: true}));
+    const f = Math.max(1, Math.min(12, +kn.from || 1)) - 1, v = +kn.val;
+    const monthly = i.nz.length >= 10 || (i.nz.length >= 2 && l.amounts[11] && l.amounts[10] && i.nz[i.nz.length - 1] === i.nz[i.nz.length - 2]);
+    let b2 = base.amounts.slice();
+    if (kn.kind === 'pct') b2 = b2.map((x, k) => k >= f ? Math.round(x * (1 + v / 100)) : x);
+    else if (monthly || !i.nz.length) b2 = b2.map((x, k) => k >= f ? v : x);
+    else { const hit = b2.some((x, k) => x && k >= f); b2 = b2.map((x, k) => x && (k >= f || !hit) ? v : x); }
+    return {amounts: b2, notes: [knownLabel(kn)], review: base.review || []};
+  }
   if (l.keep) return {amounts: a, notes: []};
-  const np = o.year ? nextPrice(l, o.year) : null;
+  const np = o.year && !o.skipNp ? nextPrice(l, o.year) : null;
   if (np && np.monthly){
     const monthly = i.nz.length >= 10 || (i.nz.length >= 2 && l.amounts[11] && l.amounts[10] && i.nz[i.nz.length - 1] === i.nz[i.nz.length - 2]);
     a = monthly ? Array(12).fill(np.monthly) : a.map(v => v ? np.monthly : 0);
@@ -1442,6 +1492,7 @@ function buildNextYear(from, o){
     nb.categories.forEach(c => c.lines.forEach(l => { if (ids.includes(l.id)){ l.amounts = l.amounts.map(v => (+v || 0) + adv.per); const ch = changes.find(x => x.name === l.name); const note = `+${fmt(adv.per)} kr/md for at undgå underskud`; if (ch){ ch.n = sum(l.amounts); ch.notes.push(note); } else changes.push({cat: c.name, name: l.name, a: sum(from.categories.find(fc => fc.id === c.id).lines.find(fl => fl.id === l.id).amounts), n: sum(l.amounts), notes: [note], review: []}); } }));
     raised = adv;
   }
+  nb.categories.forEach(c => c.lines.forEach(l => { if (l.next && +l.next.year <= +nb.year) delete l.next; }));
   nb.linked = true; nb.startAuto = !!o.carry; nb.removed = [];
   nb.rollOpts = {latest: !!o.latest, resetOneOff: !!o.resetOneOff, index: o.index || 0, indexVar: !!o.indexVar, raise: !!o.raise, carry: !!o.carry};
   nb.categories.forEach(c => c.lines.forEach(l => { l.auto = l.amounts.slice(); }));
@@ -1522,6 +1573,7 @@ function newYearModal(){
     <div class="inline" style="margin:8px 0"><label class="field" style="max-width:220px">Generel prisregulering af udgifter (%)<input class="inp num" id="oIdx" inputmode="decimal" value="0"></label>
     <label class="chk" style="flex:1"><input type="checkbox" id="oIdxVar"><span>Også forbrugsposter med svingende beløb (el, benzin, opladning)</span></label></div>
     <p class="muted" style="font-size:12.5px;margin:0 0 10px">Lån, opsparing og indtægter reguleres ikke med procentsatsen.</p>
+    <p style="margin:0 0 10px;font-size:14px">${(n => n ? `↗ <b>${n} kendte prisændring${n > 1 ? 'er' : ''}</b> bliver brugt.` : 'Ingen kendte prisændringer noteret.')(allLines(from).filter(({l}) => knownChange(l, ny)).length)} <button class="btn small ghost" data-act="nyKnown">Notér / ret prisændringer</button></p>
     <div id="nyPrev"></div>
     <div class="acts"><span class="sp"></span><button class="btn" data-act="close">Annuller</button><button class="btn primary" data-act="nyCreate">Opret ${ny}</button></div>`, sheet => {
     MODAL_ACTS = {};
@@ -2153,6 +2205,7 @@ const ACTS = {
   },
   delSv(t){ delete S.sv.items[t.dataset.id]; saveSv(); render(); },
   applyRaise: raiseModal,
+  known(){ knownModal(); }, nyKnown(){ closeModal(); knownModal(); },
   revOpen(){ reviewModal(); }, revSnooze(){ snoozeModal(); }, revSetSwitch(){ setSwitchModal(); },
   csv(){ $('#csvIn').click(); },
   goalEdit(t){ goalModal(t.dataset.l); },

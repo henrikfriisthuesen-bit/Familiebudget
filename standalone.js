@@ -229,6 +229,32 @@
   function alertIn(m, text){ let b = m.querySelector('.banner'); if (!b){ b = document.createElement('div'); m.querySelector('h2').after(b); } b.className = 'banner err'; b.textContent = text; }
 
   document.addEventListener('click', e => { if (e.target.closest('[data-act="syncSetup"]')){ e.preventDefault(); openSetup(); } });
+
+  /* ---------- ny version ---------- */
+  const APP_VERSION = 'familiebudget-v16';
+  let verShown = false, verChecked = 0;
+  async function checkVersion(){
+    if (verShown || !navigator.onLine || Date.now() - verChecked < 5 * 60e3) return; verChecked = Date.now();
+    try { const t = await fetch('sw.js?v=' + Date.now(), { cache: 'no-store' }).then(r => r.ok ? r.text() : ''); const m = t.match(/VERSION\s*=\s*'([^']+)'/);
+      if (m && m[1] !== APP_VERSION) showUpdate(m[1]); } catch (e) {}
+  }
+  function showUpdate(v){
+    verShown = true; const d = document.createElement('div'); d.id = 'verBar';
+    d.innerHTML = `<span>Der er en ny version af appen.</span><button class="btn small primary" type="button">Opdatér nu</button><button class="btn small ghost" type="button" aria-label="Senere">Senere</button>`;
+    d.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:calc(16px + env(safe-area-inset-bottom));z-index:70;background:var(--surface);color:var(--ink);border:1px solid var(--line);box-shadow:var(--shadow);border-radius:12px;padding:10px 12px;display:flex;gap:10px;align-items:center;font-size:14px;max-width:calc(100vw - 24px)';
+    const [up, later] = d.querySelectorAll('button');
+    later.onclick = () => d.remove();
+    up.onclick = async () => { up.textContent = 'Henter…'; up.disabled = true;
+      try { await Promise.all(['./', 'index.html', 'standalone.js', 'sw.js', 'manifest.webmanifest'].map(f => fetch(f, { cache: 'reload' }).catch(() => {})));
+        const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration(); if (reg) await reg.update().catch(() => {});
+        if (window.caches) for (const k of await caches.keys()) if (k.startsWith('familiebudget-v')) await caches.delete(k);
+      } catch (e) {}
+      location.reload(); };
+    document.body.appendChild(d);
+  }
+  setTimeout(checkVersion, 4000);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkVersion(); });
+  setInterval(checkVersion, 30 * 60e3);
   Sync.load(); if (Sync.cfg) askPersist();
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', addButton); else addButton();
   window.addEventListener('online', () => Sync.run());

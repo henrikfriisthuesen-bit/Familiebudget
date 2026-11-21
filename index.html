@@ -815,10 +815,23 @@ function migrateKnown(){
   changedYears.forEach(y => saveYear(y)); if (insCh) saveIns();
   if (changedYears.size || insCh){ migSig = ''; if (n) toast(`${n} prisændring${n > 1 ? 'er' : ''} fra noter er flyttet til “Kendte prisændringer”`); softRender(); }
 }
+/* Betalingsmønster: hyppighed, første måned og seneste beløb */
+const FREQS = [[1, 'Hver måned'], [2, 'Hver 2. måned'], [3, 'Kvartalsvis'], [4, 'Hver 4. måned'], [6, 'Halvårligt'], [12, 'Årligt']];
+function detectSchedule(amounts){
+  const idx = amounts.map((v, i) => +v ? i : -1).filter(i => i >= 0);
+  if (!idx.length) return {f: 1, s: 0, amt: 0, n: 0};
+  const amt = +amounts[idx[idx.length - 1]];
+  if (idx.length === 1) return {f: 12, s: idx[0], amt, n: 1};
+  const d = idx.slice(1).map((v, k) => v - idx[k]), cnt = {}; d.forEach(x => cnt[x] = (cnt[x] || 0) + 1);
+  let f = +Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a] || a - b)[0];
+  if (!FREQS.some(x => x[0] === f)) f = FREQS.reduce((a, x) => Math.abs(x[0] - f) < Math.abs(a - f) ? x[0] : a, 1);
+  return {f, s: idx[0], amt, n: idx.length};
+}
+const schedLabel = sc => sc.n ? (FREQS.find(x => x[0] === sc.f) || [0, ''])[1].toLowerCase() + (sc.f > 1 ? ' fra ' + MONL[sc.s] : '') : 'ingen betalinger';
 function knownBox(l){
   const ny = +S.year + 1, kn = l.next && +l.next.year === ny ? l.next : null, np = nextPrice(l, ny);
   return `<details class="fold box" ${kn ? 'open' : ''}><summary><b>Kendt prisændring i ${ny}</b>${kn ? ' · ' + esc(knownLabel(kn)) : ''}</summary>
-    <p class="muted" style="margin:6px 0 8px;font-size:13px">Bruges automatisk, når budget ${ny} oprettes${S.years[String(ny)] && S.years[String(ny)].linked ? ' – og ' + ny + ' opdateres allerede nu' : ''}.${np && !kn ? ' Fra ' + (np.src === 'note' ? 'note' : 'police') + ': ' + fmt(np.monthly) + ' kr pr. betaling.' : ''}</p>
+    <p class="muted" style="margin:6px 0 8px;font-size:13px">Betales ${schedLabel(detectSchedule(l.amounts))}${l.amounts.some(v => +v) ? ' – det samme mønster bruges i ' + ny : ''}. Bruges automatisk, når budget ${ny} oprettes${S.years[String(ny)] && S.years[String(ny)].linked ? ' – og ' + ny + ' opdateres allerede nu' : ''}.${np && !kn ? ' Fra ' + (np.src === 'note' ? 'note' : 'police') + ': ' + fmt(np.monthly) + ' kr pr. betaling.' : ''}</p>
     <div class="row3"><label class="field">Type<select class="inp" id="knKind"><option value="">Ingen</option><option value="amt" ${kn && kn.kind !== 'pct' ? 'selected' : ''}>Nyt beløb pr. betaling</option><option value="pct" ${kn && kn.kind === 'pct' ? 'selected' : ''}>Stigning i %</option></select></label>
     <label class="field">Beløb / %<input class="inp num" id="knVal" inputmode="decimal" value="${kn ? String(kn.val).replace('.', ',') : ''}" placeholder="fx 459 eller 3,5"></label>
     <label class="field">Fra måned<select class="inp" id="knFrom">${MONL.map((m, k) => `<option value="${k + 1}" ${kn && +kn.from === k + 1 ? 'selected' : ''}>${m}</option>`).join('')}</select></label></div></details>`;
@@ -832,7 +845,7 @@ function knownModal(){
   const b = B(), ny = +S.year + 1; let q = '';
   const rows = () => allLines(b, (l, c) => c.type !== 'savings' || true).filter(({l, c}) => !resetsYearly(c) || isFixedPost(l)).filter(({l, c}) => !q || norm(l.name + ' ' + c.name).includes(norm(q)));
   const draw = () => { $('#knBody').innerHTML = rows().map(({l, c}) => { const kn = l.next && +l.next.year === ny ? l.next : null, np = nextPrice(l, ny), i = info(l);
-    return `<tr data-kl="${l.id}"><td><b>${esc(l.name)}</b><div class="muted" style="font-size:12px">${esc(c.name)} · nu ${fmt(i.last)} kr${np && !kn ? ` · <span title="Bruges hvis du ikke skriver andet">${np.src === 'note' ? 'note' : 'police'}: ${fmt(np.monthly)}</span>` : ''}</div></td>
+    return `<tr data-kl="${l.id}"><td><b>${esc(l.name)}</b><div class="muted" style="font-size:12px">${esc(c.name)} · nu ${fmt(i.last)} kr ${schedLabel(detectSchedule(l.amounts))}${np && !kn ? ` · <span title="Bruges hvis du ikke skriver andet">${np.src === 'note' ? 'note' : 'police'}: ${fmt(np.monthly)}</span>` : ''}</div></td>
       <td><select class="inp" data-k="kind" style="min-width:150px"><option value="">–</option><option value="amt" ${kn && kn.kind !== 'pct' ? 'selected' : ''}>Nyt beløb</option><option value="pct" ${kn && kn.kind === 'pct' ? 'selected' : ''}>Stigning %</option></select></td>
       <td><input class="inp num" data-k="val" inputmode="decimal" style="width:100px" value="${kn ? String(kn.val).replace('.', ',') : ''}"></td>
       <td><select class="inp" data-k="from">${MONL.map((m, k) => `<option value="${k + 1}" ${kn && +kn.from === k + 1 ? 'selected' : ''}>${m.slice(0, 3)}</option>`).join('')}</select></td></tr>`; }).join(''); };
@@ -874,13 +887,17 @@ function endModal(cid, lid){
 function lineModal(cid, lid){
   const cat = findCat(cid); const isNew = !lid;
   const l = isNew ? {id:'', name:'', amounts:Array(12).fill(0)} : findLine(cid, lid);
+  const sc = detectSchedule(l.amounts), bb0 = B(), firstOpen = (bb0.rec || []).findIndex(x => !x);
+  const fromDef = firstOpen >= 0 ? firstOpen : (+S.year === new Date().getFullYear() ? new Date().getMonth() : 0);
   openModal(`<h2>${isNew ? 'Ny post i ' + esc(cat.name) : esc(l.name)}</h2><p class="muted" style="margin:0 0 14px">${esc(cat.name)} · ${esc(S.year)}</p>
     <label class="field">Navn<input class="inp" id="lmName" value="${esc(l.name)}" placeholder="fx Netflix"></label>
     <div class="box"><h4>Hurtigudfyld</h4>
-      <div class="row3"><label class="field">Beløb pr. betaling<input class="inp num" id="qfAmt" inputmode="decimal" placeholder="0"></label>
-      <label class="field">Hyppighed<select class="inp" id="qfFreq"><option value="1">Hver måned</option><option value="2">Hver 2. måned</option><option value="3">Kvartalsvis</option><option value="6">Halvårligt</option><option value="12">Årligt</option></select></label>
-      <label class="field">Første/fra måned<select class="inp" id="qfStart">${MONL.map((m, i) => `<option value="${i}">${m}</option>`).join('')}</select></label></div>
-      <div class="inline" style="margin-top:8px"><button class="btn small" data-act="qfApply" title="Nulstiller året og indsætter beløbet efter hyppigheden">Udfyld hele året</button><button class="btn small" data-act="qfFromApply" title="Beholder månederne før og ændrer beløbet fra den valgte måned">Ny pris fra måned</button></div>
+      ${sc.n ? `<p class="muted" style="margin:0 0 8px;font-size:13px">Registreret: <b>${schedLabel(sc)}</b>, seneste beløb ${fmt(sc.amt)} kr</p>` : ''}
+      <div class="row3"><label class="field">Beløb pr. betaling<input class="inp num" id="qfAmt" inputmode="decimal" placeholder="0" value="${sc.amt ? kr0(sc.amt) : ''}"></label>
+      <label class="field">Hyppighed<select class="inp" id="qfFreq">${FREQS.map(([v, t]) => `<option value="${v}" ${sc.f === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+      <label class="field">Første betaling i<select class="inp" id="qfStart">${MONL.map((m, i) => `<option value="${i}" ${sc.s === i ? 'selected' : ''}>${m}</option>`).join('')}</select></label></div>
+      <div class="inline" style="margin-top:8px"><button class="btn small" data-act="qfApply" title="Nulstiller året og indsætter beløbet efter hyppigheden">Udfyld hele året</button>
+      <span class="muted" style="font-size:13px">eller ny pris fra</span><select class="inp" id="qfFrom" style="width:auto">${MONL.map((m, i) => `<option value="${i}" ${i === fromDef ? 'selected' : ''}>${m}</option>`).join('')}</select><button class="btn small" data-act="qfFromApply" title="Beholder månederne før og bruger det nye beløb efter hyppigheden fra den valgte måned">Brug ny pris</button></div>
       <div class="inline" style="margin-top:12px"><label class="field">Eller fordel et årsbeløb jævnt<input class="inp num" id="qfYear" inputmode="decimal" placeholder="fx 12.000"></label><button class="btn small" data-act="qfSpread">Fordel</button></div>
     </div>
     <div class="months" style="margin-top:14px">${l.amounts.map((v, m) => `<label>${MON[m]}${isRec(B(), m) ? ' ✓' : ''}${l.plan && l.plan[m] != null && +l.plan[m] !== +v ? ` <span class="muted">(budget ${fmt(l.plan[m])})</span>` : ''}<input class="num lm" inputmode="decimal" data-m="${m}" value="${kr0(v)}"></label>`).join('')}</div>
@@ -902,7 +919,7 @@ function lineModal(cid, lid){
       MODAL_ACTS = {
         qfApply(){ const a = parseNum($('#qfAmt').value), f = +$('#qfFreq').value, s = +$('#qfStart').value; setAll(Array.from({length:12}, (_, m) => (m >= s && (m - s) % f === 0) ? a : 0)); },
         qfSpread(){ const y = parseNum($('#qfYear').value); const per = Math.round(y / 12); setAll(Array.from({length:12}, (_, m) => m === 11 ? y - per * 11 : per)); },
-        qfFromApply(){ const a = parseNum($('#qfAmt').value), f = +$('#qfFreq').value, s0 = +$('#qfStart').value; const arr = cur(); for (let m = s0; m < 12; m++) arr[m] = f === 1 ? a : (arr[m] ? a : 0); setAll(arr); },
+        qfFromApply(){ const a = parseNum($('#qfAmt').value), f = +$('#qfFreq').value, s0 = +$('#qfStart').value, from = +$('#qfFrom').value; const arr = cur(); for (let m = from; m < 12; m++) arr[m] = (((m - s0) % f) + f) % f === 0 ? a : 0; setAll(arr); toast('Ny pris fra ' + MONL[from] + ' – husk at gemme'); },
         lmBulk(){ closeModal(); bulkModal(cid, lid); },
         lmEnd(){ closeModal(); endModal(cid, lid); },
         lmUnEnd(){ if (l.endBackup) l.endBackup.forEach((v, m) => { if (!isRec(B(), m) && !+l.amounts[m]) l.amounts[m] = v; }); delete l.endBackup; delete l.ends; const nb = S.years[String(+S.year + 1)]; if (nb && nb.removed) nb.removed = nb.removed.filter(x => x !== l.id); saveYear(); closeModal(); render(); toast('Posten fortsætter i ' + (+S.year + 1)); },

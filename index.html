@@ -366,7 +366,7 @@ function recommendedHtml(){
 }
 
 /* ---------- state ---------- */
-const S = { f:{q:'', cat:'', kind:'', m:new Date().getMonth()}, qsel:null, years:{}, year:null, ins:{lines:{}}, hh:{}, quotes:{}, sv:{items:{}}, db:null, dbState:'loading', tab:'oversigt', ai:null, aiBusy:false, dl:null, sample:null, assets:null, docs:{lines:{}}, goals:{items:{}}, rules:{map:{}}, insrev:{}, review:{}, chg:{months:{}}, finds:{items:{}} };
+const S = { f:{q:'', cat:'', kind:'', m:new Date().getMonth()}, qsel:null, years:{}, year:null, ins:{lines:{}}, hh:{}, quotes:{}, sv:{items:{}}, db:null, dbState:'loading', tab:'oversigt', ai:null, aiBusy:false, dl:null, sample:null, assets:null, docs:{lines:{}}, goals:{items:{}}, rules:{map:{}}, insrev:{}, review:{}, chg:{months:{}}, finds:{items:{}}, loaded:{} };
 const B = () => S.years[S.year];
 
 /* ---------- calc ---------- */
@@ -505,7 +505,7 @@ async function initDb(){
   }, onErr);
   const sub = (path, key, def) => db.doc(path).onSnapshot(s => {
     if (isDirty(path)) return;
-    const d = s.exists ? s.data() : def;
+    const d = s.exists ? s.data() : def; S.loaded[key] = true;
     if (JSON.stringify(d) !== JSON.stringify(S[key])){ S[key] = clone(d); softRender(); }
   }, () => {});
   sub('insurance/meta', 'ins', {lines:{}});
@@ -831,7 +831,7 @@ let migSig = '';
 /* ---------- AUTOMATISK UDKAST TIL NÆSTE ÅR ---------- */
 function autoDraft(){
   const now = new Date(), Y = now.getFullYear(), ny = String(Y + 1); if (now.getMonth() < 9) return;
-  if (!S.years[String(Y)] || S.years[ny] || (S.hh.draftSkip || []).includes(+ny)) return;
+  if (!S.loaded.hh || !S.years[String(Y)] || S.years[ny] || (S.hh.draftSkip || []).includes(+ny)) return;
   if (window.STANDALONE && window.FBSyncReady && !window.FBSyncReady()) return;
   const {nb} = buildNextYear(S.years[String(Y)], {latest: true, resetOneOff: true, index: 0, indexVar: false, carry: true, raise: true, avgVar: true});
   nb.draft = {created: todayStr()}; S.years[ny] = nb; saveYear(ny);
@@ -1123,7 +1123,7 @@ function endModal(cid, lid){
     MODAL_ACTS = {
       enGo(){ const lm = +$('#enM').value; let kept = 0; l.endBackup = l.amounts.slice();
         for (let m = lm + 1; m < 12; m++){ if (!+l.amounts[m]) continue; if (isRec(b, m)){ kept++; continue; } l.amounts[m] = 0; }
-        l.ends = +S.year; delete l.next; dropNext(); saveYear(); closeModal(); render();
+        l.ends = +S.year; l.endDate = lm >= 0 ? ymStr(+S.year, lm) : ymStr(+S.year - 1, 11); delete l.next; dropNext(); saveYear(); closeModal(); render();
         toast(`${l.name} udgår${inNext ? ' – fjernet fra ' + ny : ''}${kept ? ` (${kept} afstemt${kept > 1 ? 'e' : ''} måned${kept > 1 ? 'er' : ''} bevaret)` : ''}`); },
       enDel(){ confirmModal(`Slet "${esc(l.name)}" helt fra ${esc(S.year)}${inNext ? ' og ' + ny : ''}? Det kan ikke fortrydes.`, 'Slet', () => {
         cat.lines = cat.lines.filter(x => x.id !== l.id); if (b.linked){ b.removed = b.removed || []; b.removed.push(l.id); } dropNext(); saveYear(); render(); toast(l.name + ' er slettet'); }); }
@@ -1188,7 +1188,7 @@ function lineModal(cid, lid, opts = {}){
         qfFromApply(){ const a = parseNum($('#qfAmt').value), f = +$('#qfFreq').value, s0 = +$('#qfStart').value, from = +$('#qfFrom').value; const arr = cur(); for (let m = from; m < 12; m++) arr[m] = (((m - s0) % f) + f) % f === 0 ? a : 0; setAll(arr); toast('Ny pris fra ' + MONL[from] + ' – husk at gemme'); },
         lmBulk(){ closeModal(); bulkModal(cid, lid); },
         lmEnd(){ closeModal(); endModal(cid, lid); },
-        lmUnEnd(){ if (l.endBackup) l.endBackup.forEach((v, m) => { if (!isRec(B(), m) && !+l.amounts[m]) l.amounts[m] = v; }); delete l.endBackup; delete l.ends; const nb = S.years[String(+S.year + 1)]; if (nb && nb.removed) nb.removed = nb.removed.filter(x => x !== l.id); saveYear(); closeModal(); render(); toast('Posten fortsætter i ' + (+S.year + 1)); },
+        lmUnEnd(){ if (l.endBackup) l.endBackup.forEach((v, m) => { if (!isRec(B(), m) && !+l.amounts[m]) l.amounts[m] = v; }); delete l.endBackup; delete l.ends; delete l.endDate; delete l.freedTo; const nb = S.years[String(+S.year + 1)]; if (nb && nb.removed) nb.removed = nb.removed.filter(x => x !== l.id); saveYear(); closeModal(); render(); toast('Posten fortsætter i ' + (+S.year + 1)); },
         lmDelete(){ confirmModal(`Slet "${esc(l.name)}" fra ${esc(S.year)}?`, 'Slet', () => { cat.lines = cat.lines.filter(x => x.id !== l.id); const bb = B(); if (bb.linked){ bb.removed = bb.removed || []; bb.removed.push(l.id); } saveYear(); render(); }); },
         lmSave(){
           const name = $('#lmName').value.trim(); if (!name){ $('#lmName').focus(); return; }
@@ -1929,11 +1929,11 @@ function newYearModal(){
       </tbody></table></div>`;
     MODAL_ACTS.nyCreate = () => {
       const doIt = () => { S.years[String(ny)] = nb; saveYear(String(ny)); S.year = String(ny); store.set('budget.year', S.year); closeModal(); location.hash = 'budget'; render(); toast('Budget ' + ny + ' er oprettet – gennemgå de markerede poster.'); };
-      exists ? confirmModal(`Der findes allerede et budget for ${ny}. Vil du overskrive det?`, 'Overskriv', doIt) : doIt();
+      exists && !S.years[String(ny)].draft ? confirmModal(`Der findes allerede et budget for ${ny}. Vil du overskrive det?`, 'Overskriv', doIt) : doIt();
     };
   };
   openModal(`<h2>Nyt budget for ${ny}</h2><p class="muted" style="margin:0 0 12px">Bygger på de registrerede beløb i ${esc(S.year)}${recCount(from) ? ' (' + recCount(from) + ' afstemte måneder)' : ''} og kendte nye priser fra noter og forsikringer. Retter du senere i ${esc(S.year)}, opdateres ${ny} automatisk – dog ikke poster, du selv har rettet i ${ny}.</p>
-    ${exists ? `<div class="banner err">Der findes allerede et budget for ${ny} – det bliver overskrevet.</div>` : ''}
+    ${exists ? (S.years[String(ny)].draft ? `<div class="banner">Udkastet til ${ny} bliver erstattet af det, du vælger her.</div>` : `<div class="banner err">Der findes allerede et budget for ${ny} – det bliver overskrevet.</div>`) : ''}
     <label class="chk"><input type="checkbox" id="oLatest" checked><span><b>Brug seneste pris</b> for faste poster, der har ændret sig i løbet af året (fx forsikringer der steg i december, nyt mobilabonnement, højere overførsler)</span></label>
     <label class="chk"><input type="checkbox" id="oAvg" checked><span><b>Svingende forbrug som gennemsnit</b> – fx benzin, el og opladning: årets total ÷ 12 hver måned (kan slås til/fra pr. post)</span></label>
     <label class="chk"><input type="checkbox" id="oOne" checked><span><b>Nulstil engangsposter</b> (ekstra indbetalinger m.m.). Diverse nulstilles altid – kun Renter og Regulering bevares, med 0 kr.</span></label>
@@ -2046,10 +2046,10 @@ function chgSummary(){
   const clever = s('clever') * k, alt = s('alt') * k, you = s('you') * k, kwh = s('total') * k, pub = s('pub') * k;
   const best = Math.min(alt, you), diff = clever - best;
   const last3 = rows.slice(-3), till3 = last3.reduce((a, r) => a + r.tillaeg, 0) / Math.max(1, last3.length);
-  const fc = 849 * 0 + ((S.chg || {}).months && rows.length ? (+(S.chg.months[rows[n - 1].k] || {}).sub || 849) : 849) + Math.round(rows.reduce((a, r) => a + r.tillaeg, 0) / n);
+  const lastSub = +(((S.chg || {}).months || {})[rows[n - 1].k] || {}).sub || 849, fc = lastSub + Math.round(rows.reduce((a, r) => a + r.tillaeg, 0) / n);
   return {rows, n, clever, alt, you, best, diff, kwh, pub, till3, fc, bestName: alt <= you ? 'Betal pr. kWh hos andet selskab' : 'Clever You'};
 }
-function chgMissing(){ const now = new Date(); if (now.getDate() < 20) now.setMonth(now.getMonth() - 1); const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1), k = ymKey(prev.getFullYear(), prev.getMonth()); const ms = (S.chg || {}).months || {}; return Object.keys(ms).length && !ms[k] ? k : null; }
+function chgMissing(){ const now = new Date(); if (now.getDate() < 25) now.setMonth(now.getMonth() - 1); const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1), k = ymKey(prev.getFullYear(), prev.getMonth()); const ms = (S.chg || {}).months || {}; return Object.keys(ms).length && !ms[k] ? k : null; }
 function chgCard(){
   const sm = chgSummary(), P = chgP(), b = B(), cl = allLines(b, (l, c) => /clever|opladning|ladeabonnement/i.test(l.name) && c.type !== 'income')[0];
   if (!sm) return `<div class="card"><h2>Ladeaftale-tjek</h2><p style="margin:0 0 10px">Notér hver måned jeres opladning fra Clevers opgørelse og elregningen. Så holder appen øje med, om ladeaftalen stadig kan betale sig.</p><button class="btn small primary" data-act="chgAdd">+ Tilføj måned</button></div>`;
@@ -2063,7 +2063,7 @@ function chgCard(){
     ${miss ? `<div class="banner warn">Mangler tal for ${ymNice(miss)}. <button class="btn small" data-act="chgAdd" data-k="${miss}">Tilføj</button></div>` : ''}
     ${sm.till3 > 250 ? `<div class="banner warn">Energitillægget er i snit ${kr(sm.till3)}/md de seneste 3 måneder. Holder det sig, så tjek igen om et par måneder.</div>` : ''}
     ${bars}
-    <p class="muted" style="font-size:13px;margin:8px 0 0">Forventet ${esc(P.provider)} næste år: ca. <b>${kr(sm.fc)}/md</b> (abonnement + gns. energitillæg).${cl ? ` <button class="btn small" data-act="chgKnown" data-c="${cl.c.id}" data-l="${cl.l.id}" data-v="${Math.round(sm.fc / 10) * 10}">Brug i ↗ Priser ${+S.year + 1}</button>` : ''}</p>
+    <p class="muted" style="font-size:13px;margin:8px 0 0">Forventet ${esc(P.provider)} næste år: ca. <b>${kr(sm.fc)}/md</b> (abonnement + gns. energitillæg).${cl ? (knownChange(cl.l, +S.year + 1) ? ` Noteret i ↗ Priser ${+S.year + 1}: <b>${esc(knownLabel(cl.l.next).replace('Kendt ændring: ', ''))}</b>. <button class="btn small ghost" data-act="chgKnown" data-c="${cl.c.id}" data-l="${cl.l.id}" data-v="${Math.round(sm.fc / 10) * 10}">Ret til ${fmt(Math.round(sm.fc / 10) * 10)} kr</button>` : ` <button class="btn small" data-act="chgKnown" data-c="${cl.c.id}" data-l="${cl.l.id}" data-v="${Math.round(sm.fc / 10) * 10}">Brug i ↗ Priser ${+S.year + 1}</button>`) : ''}</p>
     ${elSection()}
     <details class="fold" style="margin-top:8px"><summary>Måneder og forudsætninger</summary>
       <div class="tscroll" style="margin-top:6px"><table class="t" style="font-size:13px"><thead><tr><th>Måned</th><th>kWh i alt</th><th>Hjemme</th><th>Ude</th><th>Hjemme kr/kWh</th><th>Tillæg</th><th>${esc(P.provider)}</th><th>Andet selskab</th><th>Clever You</th><th></th></tr></thead><tbody>
@@ -2628,22 +2628,23 @@ function exportModal(){
   });
 }
 
-function backupData(){ return {format: 'familiebudget-backup', version: 1, exported: new Date().toISOString(), years: S.years, ins: S.ins, hh: S.hh, sv: S.sv, quotes: S.quotes, goals: S.goals, rules: S.rules, docs: S.docs, insrev: S.insrev, review: S.review, charging: S.chg}; }
+function backupData(){ return {format: 'familiebudget-backup', version: 1, exported: new Date().toISOString(), years: S.years, ins: S.ins, hh: S.hh, sv: S.sv, quotes: S.quotes, goals: S.goals, rules: S.rules, docs: S.docs, insrev: S.insrev, review: S.review, charging: S.chg, finds: S.finds}; }
 async function importBackup(file){
   let d;
   try { d = JSON.parse(await file.text()); } catch (e){ toast('Filen kunne ikke læses'); return; }
   if (d && d.app === 'familiebudget' && d.docs){ // datafil fra GitHub-synk
     const o = {years: {}, quotes: {}};
     for (const [path, v] of Object.entries(d.docs)){ if (!v || v.deleted) continue; const [col, id] = path.split('/');
-      if (col === 'budgets') o.years[id] = v.data; else if (col === 'quotes') o.quotes[id] = v.data; else if (path === 'insurance/meta') o.ins = v.data; else if (path === 'settings/household') o.hh = v.data; else if (path === 'savings/status') o.sv = v.data; else if (path === 'settings/goals') o.goals = v.data; else if (path === 'settings/bankrules') o.rules = v.data; else if (path === 'docs/index') o.docs = v.data; else if (path === 'settings/insreview') o.insrev = v.data; else if (path === 'insurance/review') o.review = v.data; else if (path === 'settings/charging') o.charging = v.data; }
+      if (col === 'budgets') o.years[id] = v.data; else if (col === 'quotes') o.quotes[id] = v.data; else if (path === 'insurance/meta') o.ins = v.data; else if (path === 'settings/household') o.hh = v.data; else if (path === 'savings/status') o.sv = v.data; else if (path === 'settings/goals') o.goals = v.data; else if (path === 'settings/bankrules') o.rules = v.data; else if (path === 'docs/index') o.docs = v.data; else if (path === 'settings/insreview') o.insrev = v.data; else if (path === 'insurance/review') o.review = v.data; else if (path === 'settings/charging') o.charging = v.data; else if (path === 'settings/pricefinds') o.finds = v.data; }
     d = Object.assign({format: 'familiebudget-backup'}, o);
   }
-  if (d && d.format === 'familiebudget-backup' && !d.years && d.charging) d.years = {};
+  if (d && d.format === 'familiebudget-backup' && !d.years && (d.charging || d.finds)) d.years = {};
   if (!d || d.format !== 'familiebudget-backup' || !d.years){ toast('Det er ikke en sikkerhedskopi fra Familiebudget'); return; }
   const ys = Object.keys(d.years).sort();
   confirmModal(`Gendan sikkerhedskopien med ${ys.length ? 'budget ' + ys.join(', ') : d.charging ? 'ladedata (' + Object.keys(d.charging.months || {}).length + ' måneder)' : 'ingen budgetter'}? Eksisterende år med samme årstal bliver overskrevet.`, 'Gendan', async () => {
     for (const y of ys){ S.years[y] = d.years[y]; saveYear(y); }
     if (d.ins){ S.ins = d.ins; saveIns(); } if (d.hh){ S.hh = d.hh; saveHH(); } if (d.sv){ S.sv = d.sv; saveSv(); }
+    if (d.finds && d.finds.items){ S.finds = {items: Object.assign({}, (S.finds || {}).items, d.finds.items)}; saveFinds(); }
     if (d.charging && d.charging.months){ S.chg = Object.assign({}, S.chg, d.charging, {months: Object.assign({}, (S.chg || {}).months, d.charging.months)}); saveChg(); }
     if (d.insrev){ S.insrev = d.insrev; saveInsrev(); } if (d.review){ S.review = d.review; saveReview(); }
     if (d.goals){ S.goals = d.goals; saveGoals(); } if (d.rules){ S.rules = d.rules; saveRules(); } if (d.docs){ S.docs = d.docs; saveDocs(); }

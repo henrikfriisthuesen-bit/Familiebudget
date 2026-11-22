@@ -1,11 +1,12 @@
 /* Familiebudget – offline-cache. Ret VERSION når filerne opdateres. */
-const VERSION = 'familiebudget-v23';
+const VERSION = 'familiebudget-v24';
 const ASSETS = ['./', 'index.html', 'standalone.js', 'exceljs.min.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(VERSION).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== VERSION).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener('fetch', e => {
   const req = e.request, url = new URL(req.url);
   if (req.method !== 'GET' || url.origin !== self.location.origin) return; // GitHub-synk m.m. går altid direkte på nettet
+  if (/sw\.js$/.test(url.pathname) || url.search) return; // versionstjek og forespørgsler med parametre caches ikke
   const big = /exceljs|\.png$/.test(url.pathname);
   if (big){ e.respondWith(caches.match(req).then(r => r || fetch(req).then(res => { const cp = res.clone(); caches.open(VERSION).then(c => c.put(req, cp)); return res; }))); return; }
   // App-filer: hent nyeste version, brug cachen hvis offline

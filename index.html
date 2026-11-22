@@ -345,8 +345,25 @@ const TYPES = {income:'Indtægt', expense:'Udgift', insurance:'Forsikring', loan
 const INSURERS = [
   ['Tryg','https://tryg.dk'],['Alka','https://www.alka.dk'],['Codan','https://www.codan.dk'],['GF Forsikring','https://www.gf-forsikring.dk'],
   ['LB Forsikring','https://www.lb.dk'],['If / Topdanmark','https://www.if.dk'],['Købstædernes Forsikring','https://www.kfforsikring.dk'],['Runa Forsikring','https://www.runaforsikring.dk'],
-  ['Privatsikring','https://www.privatsikring.dk'],['Popermo','https://www.popermo.dk'],['Alm. Brand','https://www.almbrand.dk'],['FDM Forsikring','https://www.fdm.dk'],['TJM Forsikring','https://tjm-forsikring.dk'],['Forsia','https://www.forsia.dk']
+  ['Privatsikring','https://www.privatsikring.dk'],['Popermo','https://www.popermo.dk'],['Alm. Brand','https://www.almbrand.dk'],['FDM Forsikring','https://www.fdm.dk'],['TJM Forsikring','https://tjm-forsikring.dk'],['Forsia','https://www.forsia.dk'],['Bauta Forsikring','https://www.bauta.dk'],['Vestjylland Forsikring','https://www.vestjylland.dk']
 ];
+/* Anbefalet ud fra jeres behov (november 2026) */
+const RECOMMENDED = [
+  {n: 'Bauta Forsikring', u: 'https://www.bauta.dk', why: 'LB Forsikrings selskab for sygeplejersker og andre i sundhedssektoren. Medlemsejet med overskudsdeling.', who: 'Majbrit kan sandsynligvis blive kunde som DSR-medlem i sundhedssektoren.'},
+  {n: 'TJM Forsikring', u: 'https://tjm-forsikring.dk', why: 'Bedst i Test på samlede forsikringer 3 år i træk (Tænk, august 2025) – billigst uden samlerabat.', who: 'Kræver medlemskab af en af deres 64 samarbejdende fagforeninger – tjek om DSR eller Henriks er med.', check: 'https://tjm-forsikring.dk/faglige-organisationer'},
+  {n: 'Alka', u: 'https://www.alka.dk', why: 'Bedst i Test på samlede forsikringer (Tænk, august 2025). Lave grundpriser og mulig bonus fra TryghedsGruppen.', who: 'Spørg om medlemsrabat via fagforening.'},
+  {n: 'Popermo', u: 'https://www.popermo.dk', why: 'Bedst i Test på samlede forsikringer (Tænk, august 2025). Mindre, medlemsejet selskab.', who: 'Spørg om de forsikrer, hvor I bor.'},
+  {n: 'Vestjylland Forsikring', u: 'https://www.vestjylland.dk', why: 'Danmarks mest tilfredse privatkunder 5 år i træk (EPSI, november 2026).', who: 'Spørg om de forsikrer, hvor I bor.'}
+];
+function recommendedHtml(){
+  const qs = Object.values(S.quotes || {});
+  return `<h4 style="margin:14px 0 8px;font-size:13px">Anbefalet at spørge først – ud fra jeres behov</h4>
+    <div class="recs">${RECOMMENDED.map(r => { const got = qs.filter(q => norm(q.company).includes(norm(r.n.split(' ')[0])));
+      return `<div class="idea" style="padding:10px 0;display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap"><div style="flex:1;min-width:240px"><b>${esc(r.n)}</b>${got.length ? ` <span class="badge good">✓ ${got.length} tilbud</span>` : ''}
+        <div style="font-size:13.5px;color:var(--ink-2)">${esc(r.why)}</div><div class="muted" style="font-size:12.5px">${esc(r.who)}${r.check ? ` <a href="${r.check}" target="_blank" rel="noopener">Se listen</a>` : ''}</div></div>
+        <span style="display:flex;gap:6px;flex-wrap:wrap"><a class="btn small" href="${r.u}" target="_blank" rel="noopener">Åbn ${esc(r.u.replace(/^https?:\/\/(www\.)?/, ''))}</a><button class="btn small" data-act="editQuote" data-co="${esc(r.n)}">Registrér tilbud</button></span></div>`; }).join('')}</div>
+    <p class="muted" style="font-size:12.5px;margin:6px 0 0">Bed også om pris på bilforsikringen alene – elbilforsikring kan variere med op til 7.000 kr for samme bil (Tænk, januar 2026). Brug det bedste tilbud til at forhandle med jeres nuværende selskab.</p>`;
+}
 
 /* ---------- state ---------- */
 const S = { f:{q:'', cat:'', kind:'', m:new Date().getMonth()}, qsel:null, years:{}, year:null, ins:{lines:{}}, hh:{}, quotes:{}, sv:{items:{}}, db:null, dbState:'loading', tab:'oversigt', ai:null, aiBusy:false, dl:null, sample:null, assets:null, docs:{lines:{}}, goals:{items:{}}, rules:{map:{}}, insrev:{}, review:{} };
@@ -2048,10 +2065,12 @@ function vInsurance(){
       <div class="toolbar" style="margin-top:8px"><button class="btn primary small" data-act="copyGen">Kopiér tekst</button>
         <a class="btn small" id="mailLink" href="mailto:?subject=${encodeURIComponent('Anmodning om tilbud på forsikringer')}&body=${encodeURIComponent(quoteText())}">Åbn i mail</a>
         <span class="muted" style="font-size:12.5px">Mail-linket virker ikke i alle apps – brug Kopiér og indsæt i stedet.</span></div>
-      <h4 style="margin:14px 0 8px;font-size:13px">Selskaber – indsæt teksten i deres tilbudsformular</h4>
+      ${recommendedHtml()}
+      <h4 style="margin:14px 0 8px;font-size:13px">Alle selskaber – indsæt teksten i deres tilbudsformular</h4>
       <div class="links">${INSURERS.map(([n, u]) => `<a href="${u}" target="_blank" rel="noopener">${n}<small>${u.replace(/^https?:\/\/(www\.)?/, '')}</small></a>`).join('')}</div>
       <h4 style="margin:14px 0 8px;font-size:13px">Sammenlign og læs op</h4>
       <div class="links">
+        <a href="https://www.forsikringsguiden.dk" target="_blank" rel="noopener">Forsikringsguiden<small>Tænk og F&amp;P – sammenlign priser</small></a>
         <a href="https://taenk.dk/privatoekonomi/forsikringer/forsikring-bedst-billigst" target="_blank" rel="noopener">Tænk<small>Bedst og billigst forsikring</small></a>
         <a href="https://www.bolius.dk/sammenlign-pakkerabat-paa-forsikringer-med-nyt-vaerktoej-92285" target="_blank" rel="noopener">Bolius<small>Sammenlign pakkerabat</small></a>
         <a href="https://giraffy.com/dk/da/insurance/home-insurance" target="_blank" rel="noopener">Giraffy<small>Sammenlign indbo</small></a>
@@ -2121,8 +2140,8 @@ function insEditModal(lid){
       saveYear(); closeModal(); render(); } };
   });
 }
-function quoteModal(id){
-  const b = B(), L = insLines(b), q = id ? clone(S.quotes[id]) : {id: 'q' + Date.now().toString(36) + uid().slice(0, 3), date: new Date().toISOString().slice(0, 10), status: 'modtaget'};
+function quoteModal(id, co){
+  const b = B(), L = insLines(b), q = id ? clone(S.quotes[id]) : {id: 'q' + Date.now().toString(36) + uid().slice(0, 3), date: new Date().toISOString().slice(0, 10), status: 'modtaget', company: co || ''};
   openModal(`<h2>${id ? 'Ret tilbud' : 'Registrér tilbud'}</h2>
     <label class="field" style="margin-top:12px">Forsikring<select class="inp" id="qmLine">${L.map(({l}) => `<option value="${l.id}" ${q.lineId === l.id ? 'selected' : ''}>${esc(l.name)} (nu ${fmt(insPrice(l).now)} kr/år)</option>`).join('')}</select></label>
     <div class="row2" style="margin-top:10px"><label class="field">Selskab<input class="inp" id="qmCo" value="${esc(q.company || '')}" list="insList2"></label>
@@ -2460,7 +2479,7 @@ const ACTS = {
   editLine(t){ lineModal(t.dataset.c, t.dataset.l); }, addLine(t){ lineModal(t.dataset.c); },
   import(){ $('#fileIn').click(); }, export: exportModal,
   ai: askClaude,
-  insEdit(t){ insEditModal(t.dataset.l); }, editQuote(t){ quoteModal(t.dataset.id); }, useQuote(t){ const q = S.quotes[t.dataset.id]; policyModal({replace: q.lineId, company: q.company, price: Math.round(q.yearly / 12 + (+q.monthlyFee || 0)), deductible: q.deductible, quote: q.id}); },
+  insEdit(t){ insEditModal(t.dataset.l); }, editQuote(t){ quoteModal(t.dataset.id, t.dataset.co); }, useQuote(t){ const q = S.quotes[t.dataset.id]; policyModal({replace: q.lineId, company: q.company, price: Math.round(q.yearly / 12 + (+q.monthlyFee || 0)), deductible: q.deductible, quote: q.id}); },
   policy(t){ policyModal({replace: t.dataset.l != null ? t.dataset.l : ''}); },
   syncReview: syncReviewModal,
   gotoYearReview(t){ S.year = t.dataset.y; store.set('budget.year', S.year); S.tab = 'budget'; history.replaceState(null, '', '#budget'); render(); syncReviewModal(); },

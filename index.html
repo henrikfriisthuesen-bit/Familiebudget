@@ -2098,6 +2098,14 @@ function chgSummary(){
   const lastSub = +(((S.chg || {}).months || {})[rows[n - 1].k] || {}).sub || 849, fc = lastSub + Math.round(rows.reduce((a, r) => a + r.tillaeg, 0) / n);
   return {rows, n, clever, alt, you, best, diff, kwh, pub, till3, fc, bestName: alt <= you ? 'Betal pr. kWh hos andet selskab' : 'Clever You'};
 }
+function chgTrend(sm){
+  /* Advarer når alternativet har været billigst de seneste 3 måneder i træk, selv om 12-måneders summen stadig ser fin ud. */
+  const P = chgP(), last = sm.rows.slice(-3); if (last.length < 3 || sm.diff > P.threshold) return null;
+  const useAlt = sm.alt <= sm.you, d = last.map(r => r.clever - (useAlt ? r.alt : r.you));
+  if (d.some(x => x <= 0)) return null;
+  const perMd = d.reduce((a, b) => a + b, 0) / d.length;
+  return {n: last.length, perMd, perYr: perMd * 12, name: useAlt ? 'betaling pr. kWh hos andet selskab' : 'Clever You'};
+}
 function chgMissing(){ const now = new Date(); if (now.getDate() < 25) now.setMonth(now.getMonth() - 1); const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1), k = ymKey(prev.getFullYear(), prev.getMonth()); const ms = (S.chg || {}).months || {}; return Object.keys(ms).length && !ms[k] ? k : null; }
 function chgCard(){
   const sm = chgSummary(), P = chgP(), b = B(), cl = allLines(b, (l, c) => /clever|opladning|ladeabonnement/i.test(l.name) && c.type !== 'income')[0];
@@ -2106,11 +2114,13 @@ function chgCard(){
   const bars = `<div style="display:flex;gap:6px;align-items:flex-end;height:120px;margin:10px 0 4px">${sm.rows.map(r => `<div style="flex:1;display:flex;gap:2px;align-items:flex-end;height:100%" data-tip="<b>${ymNice(r.k)}</b><br>${esc(P.provider)}: ${kr(r.clever)}<br>Pr. kWh andet selskab: ${kr(r.alt)}<br>Clever You: ${kr(r.you)}<br>${fmt(r.total)} kWh${r.est ? ' (ude skønnet)' : ''} · heraf ude ${fmt(r.pub)}"><i style="flex:1;background:var(--s1);border-radius:3px 3px 0 0;height:${(r.clever / max * 100).toFixed(1)}%"></i><i style="flex:1;background:var(--s2);border-radius:3px 3px 0 0;height:${(r.alt / max * 100).toFixed(1)}%"></i></div>`).join('')}</div>
     <div style="display:flex;gap:6px;font-size:11px;color:var(--ink-3)">${sm.rows.map(r => `<span style="flex:1;text-align:center">${ymNice(r.k).split(' ')[0]}</span>`).join('')}</div>
     <div class="legend" style="margin-top:6px"><span><i style="background:var(--s1)"></i>${esc(P.provider)}</span><span><i style="background:var(--s2)"></i>Betal pr. kWh, andet selskab</span></div>`;
-  const miss = chgMissing();
+  const miss = chgMissing(), trend = chgTrend(sm), src = (S.chg || {}).source;
   return `<div class="card"><h2 style="display:flex;gap:8px;align-items:center"><span style="flex:1">Ladeaftale-tjek <span class="hint">${esc(P.provider)} · seneste ${sm.n} måneder</span></span><button class="btn small" data-act="chgAdd">+ Tilføj måned</button></h2>
+    ${src ? `<p class="muted" style="font-size:12.5px;margin:-4px 0 8px">🔄 ${esc(src)}</p>` : ''}
     <div class="tiles" style="grid-template-columns:repeat(4,minmax(0,1fr))">${tile(esc(P.provider), kr(sm.clever), 'pr. år')}${tile('Bedste alternativ', kr(sm.best), esc(sm.bestName))}${tile(ok ? 'Status' : 'Kan spares', ok ? '<span class="st-good">✓ Fortsæt</span>' : `<span class="st-crit">${kr(sm.diff)}</span>`, ok ? (sm.diff > 0 ? `alternativ ${kr(sm.diff)} billigere – under grænsen` : `${kr(-sm.diff)} billigere end alternativ`) : 'pr. år – overvej at skifte')}${tile('Forbrug', fmt(sm.kwh) + ' kWh', 'pr. år · ' + Math.round(sm.pub / Math.max(1, sm.kwh) * 100) + ' % ude')}</div>
     ${miss ? `<div class="banner warn">Mangler tal for ${ymNice(miss)}. <button class="btn small" data-act="chgAdd" data-k="${miss}">Tilføj</button></div>` : ''}
-    ${sm.till3 > 250 ? `<div class="banner warn">Energitillægget er i snit ${kr(sm.till3)}/md de seneste 3 måneder. Holder det sig, så tjek igen om et par måneder.</div>` : ''}
+    ${trend ? `<div class="banner warn">⚠ De seneste ${trend.n} måneder har ${esc(trend.name)} været billigst hver måned – i snit ${kr(trend.perMd)}/md, svarende til ca. <b>${kr(trend.perYr)}/år</b>. Over 12 måneder ser det stadig fint ud, men udviklingen peger mod et skifte. Hold øje med det.</div>` : ''}
+    ${!trend && sm.till3 > 250 ? `<div class="banner warn">Energitillægget er i snit ${kr(sm.till3)}/md de seneste 3 måneder. Holder det sig, så tjek igen om et par måneder.</div>` : ''}
     ${bars}
     <p class="muted" style="font-size:13px;margin:8px 0 0">Forventet ${esc(P.provider)} næste år: ca. <b>${kr(sm.fc)}/md</b> (abonnement + gns. energitillæg).${cl ? (knownChange(cl.l, +S.year + 1) ? ` Noteret i ↗ Priser ${+S.year + 1}: <b>${esc(knownLabel(cl.l.next).replace('Kendt ændring: ', ''))}</b>. <button class="btn small ghost" data-act="chgKnown" data-c="${cl.c.id}" data-l="${cl.l.id}" data-v="${Math.round(sm.fc / 10) * 10}">Ret til ${fmt(Math.round(sm.fc / 10) * 10)} kr</button>` : ` <button class="btn small" data-act="chgKnown" data-c="${cl.c.id}" data-l="${cl.l.id}" data-v="${Math.round(sm.fc / 10) * 10}">Brug i ↗ Priser ${+S.year + 1}</button>`) : ''}</p>
     ${elSection()}

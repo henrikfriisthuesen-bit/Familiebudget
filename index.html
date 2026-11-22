@@ -252,6 +252,15 @@ table.tx tr.ign td{opacity:.5}
 .chip{border:1px solid var(--line);background:var(--surface);border-radius:99px;padding:6px 12px;cursor:pointer;font-size:13.5px;font-weight:500;color:var(--ink-2)}
 .chip.done{background:color-mix(in srgb,var(--good) 12%,var(--surface));color:var(--good-ink);border-color:color-mix(in srgb,var(--good) 30%,var(--line))}
 .chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+label.chip{position:relative}
+.menu{position:relative;display:inline-block}.menu>summary{list-style:none}.menu>summary::-webkit-details-marker{display:none}
+.menu .menu-pop{position:absolute;right:0;top:calc(100% + 6px);z-index:30;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:6px;min-width:220px;display:flex;flex-direction:column;gap:2px}
+.menu .menu-pop .btn{justify-content:flex-start;width:100%;border:0;background:transparent;text-align:left}
+.menu .menu-pop .btn:hover{background:var(--surface-2)}
+.card.collapsed>*:not(h2):not(.ctog){display:none!important}
+.card>h2{position:relative}.ctog{float:right;margin-left:8px;border:0;background:transparent;color:var(--ink-3);cursor:pointer;font-size:14px;padding:2px 6px;border-radius:6px}
+.ctog:hover{background:var(--surface-2);color:var(--ink)}
+.rem-more{margin-top:4px}
 table.rc{width:100%;border-collapse:collapse;font-size:14px;table-layout:fixed}
 table.rc col.c-b{width:110px} table.rc col.c-f{width:140px} table.rc col.c-d{width:100px} table.rc col.c-a{width:150px}
 @media (min-width:641px){table.rc .pl-s{display:none}}
@@ -568,8 +577,20 @@ function render(){
   v.innerHTML = banner + views[S.tab]();
   afterRender();
 }
+function collapsedSet(){ try { return new Set(JSON.parse(store.get('budget.collapsed') || '[]')); } catch (e){ return new Set(); } }
+function addCardToggles(){
+  const set = collapsedSet();
+  $$('#view .card').forEach(c => { const h = c.querySelector(':scope > h2'); if (!h || c.querySelector(':scope > .ctog')) return;
+    const key = (h.childNodes[0] && h.childNodes[0].textContent || h.textContent).trim().split(/\s+/).slice(0, 3).join(' ');
+    if (/^Huskeliste|^Saldo|^Indtægter og/.test(key)) return;
+    const b = document.createElement('button'); b.className = 'ctog'; b.type = 'button'; b.dataset.cardkey = key;
+    const upd = () => { const on = c.classList.contains('collapsed'); b.textContent = on ? '▸ Vis' : '▾'; b.title = on ? 'Vis kortet' : 'Fold kortet sammen'; b.setAttribute('aria-expanded', String(!on)); };
+    if (set.has(key)) c.classList.add('collapsed'); upd();
+    b.addEventListener('click', ev => { ev.stopPropagation(); c.classList.toggle('collapsed'); const s2 = collapsedSet(); c.classList.contains('collapsed') ? s2.add(key) : s2.delete(key); store.set('budget.collapsed', JSON.stringify([...s2])); upd(); if (!c.classList.contains('collapsed')) drawCharts(); });
+    h.prepend(b); });
+}
 function afterRender(){
-  if (S.tab === 'oversigt') drawCharts();
+  if (S.tab === 'oversigt'){ drawCharts(); addCardToggles(); }
   if (window.FBReminders && B()){ try { window.FBReminders(reminderItems(B()).map(x => x[1])); } catch (e){} }
 }
 let lastW = innerWidth, lastMobile = innerWidth < 900;
@@ -726,12 +747,14 @@ function vBudget(){
     <span style="flex:1"></span>
     <button class="btn small" data-act="newPost">+ Ny post</button>
     <button class="btn small" data-act="known" title="Notér kendte prisstigninger til næste år">↗ Priser ${+S.year + 1}${(n => n ? ' (' + n + ')' : '')(allLines(b).filter(({l}) => knownChange(l, +S.year + 1)).length)}</button>
-    <button class="btn small" data-act="addCat">+ Kategori</button>
-    <button class="btn small" data-act="cleanup" title="Find poster uden beløb">🧹 Ryd op</button>
-    <button class="btn small" data-act="code" title="Indsæt kode fra Claudes besked">📋 Indsæt kode</button>
-    <button class="btn small" data-act="import">Importér Excel</button>
-    <button class="btn small" data-act="backup">Sikkerhedskopi</button>
-    ${S.dl ? '<button class="btn small primary" data-act="export">⬇ Download Excel</button>' : ''}
+    <details class="menu"><summary class="btn small" aria-label="Flere funktioner">⋯ Mere</summary><div class="menu-pop">
+      <button class="btn small" data-act="code">📋 Indsæt kode fra Claude</button>
+      <button class="btn small" data-act="addCat">+ Ny kategori</button>
+      <button class="btn small" data-act="cleanup">🧹 Ryd op i poster uden beløb</button>
+      ${S.dl ? '<button class="btn small" data-act="export">⬇ Download Excel</button>' : ''}
+      <button class="btn small" data-act="import">Importér Excel</button>
+      <button class="btn small" data-act="backup">Sikkerhedskopi / gendan</button>
+    </div></details>
   </div></div>` + draftBanner(b) + adviceHtml(b) + syncBanner(b) + filterBar(b) + `<div id="flist">${budgetList(b)}</div>`;
   return h;
 }
@@ -1107,6 +1130,14 @@ function knownModal(){
     MODAL_ACTS = { knSave(){ collect(); saveYear(); closeModal(); render(); const n = allLines(b).filter(({l}) => knownChange(l, ny)).length; toast(n ? `${n} kendte ændring${n > 1 ? 'er' : ''} til ${ny} gemt` : 'Gemt'); } };
   }, true);
 }
+function delModal(cid, lid){
+  const b = B(), cat = findCat(cid), l = findLine(cid, lid), ny = String(+S.year + 1), nb = S.years[ny], inNext = nb && findLineIn(nb, lid);
+  const recAmt = l.amounts.some((v, m) => +v && isRec(b, m));
+  confirmModal(`Slet "${esc(l.name)}" helt fra ${esc(S.year)}${inNext ? ' og ' + ny : ''}? ${recAmt ? '<br><b class="st-crit">Posten har beløb i afstemte måneder – de forsvinder også, så saldoen ændrer sig.</b><br>' : ''}Skal posten bare stoppe, så vælg i stedet "Slutter på en dato" i posten.`, 'Slet', () => {
+    cat.lines = cat.lines.filter(x => x.id !== l.id); if (b.linked){ b.removed = b.removed || []; b.removed.push(l.id); }
+    if (inNext){ inNext.c.lines = inNext.c.lines.filter(x => x.id !== lid); if (nb.linked){ nb.removed = nb.removed || []; if (!nb.removed.includes(lid)) nb.removed.push(lid); } saveYear(ny); }
+    saveYear(); render(); toast(l.name + ' er slettet'); });
+}
 function endModal(cid, lid){
   const b = B(), cat = findCat(cid), l = findLine(cid, lid), ny = String(+S.year + 1), nb = S.years[ny], inNext = nb && findLineIn(nb, lid);
   const recAmt = l.amounts.some((v, m) => +v && isRec(b, m)), lastPaid = l.amounts.reduce((a, v, m) => +v && isRec(b, m) ? m : a, -1);
@@ -1129,6 +1160,16 @@ function endModal(cid, lid){
         cat.lines = cat.lines.filter(x => x.id !== l.id); if (b.linked){ b.removed = b.removed || []; b.removed.push(l.id); } dropNext(); saveYear(); render(); toast(l.name + ' er slettet'); }); }
     };
   });
+}
+function endChoice(l, cat, isNew){
+  const e = ymParse(l.endDate), ne = !isNew && !e && !l.oneOff ? noteEnd(l) : null, st = l.oneOff ? 'one' : (e || ne) ? 'end' : 'go';
+  const pe = e || (ne ? ymParse(ne) : null), ys = Array.from({length: 12}, (_, i) => +S.year - 1 + i);
+  return `<div class="box" style="margin-top:12px"><h4>Hvornår slutter posten?</h4>
+    <div class="chips" style="margin:0" role="radiogroup">${[['go', 'Fortsætter næste år'], ['one', 'Kun i år'], ['end', 'Slutter på en dato']].map(([v, t]) => `<label class="chip ${st === v ? 'on' : ''}" style="cursor:pointer"><input type="radio" name="lmEndSt" value="${v}" ${st === v ? 'checked' : ''} style="position:absolute;opacity:0">${t}</label>`).join('')}</div>
+    <div id="lmEndRow" style="margin-top:10px;${st === 'end' ? '' : 'display:none'}"><div class="row2"><label class="field">Sidste betaling – måned<select class="inp" id="edM">${MONL.map((m, k) => `<option value="${k}" ${pe && pe.m === k ? 'selected' : ''}>${m}</option>`).join('')}</select></label>
+      <label class="field">År<select class="inp" id="edY">${ys.map(y => `<option ${pe && pe.y === y ? 'selected' : ''}>${y}</option>`).join('')}</select></label></div>
+      <p class="muted" style="font-size:12.5px;margin:6px 0 0">${ne && !e ? 'Udfyldt fra noten. ' : ''}Senere måneder sættes til 0, og posten kommer ikke med efter slutdatoen. Frigjorte penge kan planlægges under Oversigt.</p></div>
+    <p class="muted" id="lmOneHint" style="font-size:12.5px;margin:6px 0 0;${st === 'one' ? '' : 'display:none'}">Beløbet nulstilles, når næste års budget laves – fx ekstra indbetalinger eller en enkelt udgift.</p></div>`;
 }
 function endBox(l, cat){
   const e = ymParse(l.endDate), ne = !e ? noteEnd(l) : null, ys = Array.from({length: 12}, (_, i) => +S.year - 1 + i);
@@ -1158,24 +1199,27 @@ function lineModal(cid, lid, opts = {}){
       <label class="field">Første betaling i<select class="inp" id="qfStart">${MONL.map((m, i) => `<option value="${i}" ${sc.s === i ? 'selected' : ''}>${m}</option>`).join('')}</select></label></div>
       <div class="inline" style="margin-top:8px"><button class="btn small" data-act="qfApply" title="Nulstiller året og indsætter beløbet efter hyppigheden">Udfyld hele året</button>
       <span class="muted" style="font-size:13px">eller ny pris fra</span><select class="inp" id="qfFrom" style="width:auto">${MONL.map((m, i) => `<option value="${i}" ${i === fromDef ? 'selected' : ''}>${m}</option>`).join('')}</select><button class="btn small" data-act="qfFromApply" title="Beholder månederne før og bruger det nye beløb efter hyppigheden fra den valgte måned">Brug ny pris</button></div>
-      <div class="inline" style="margin-top:12px"><label class="field">Eller fordel et årsbeløb jævnt<input class="inp num" id="qfYear" inputmode="decimal" placeholder="fx 12.000"></label><button class="btn small" data-act="qfSpread">Fordel</button></div>
+      <details class="fold" style="margin-top:10px"><summary style="font-size:13.5px">Andre måder at udfylde på</summary>
+      <div class="inline" style="margin-top:8px"><label class="field">Eller fordel et årsbeløb jævnt<input class="inp num" id="qfYear" inputmode="decimal" placeholder="fx 12.000"></label><button class="btn small" data-act="qfSpread">Fordel</button></div>
       ${!isNew && (prevL || recN) ? `<div class="inline" style="margin-top:8px">${prevL ? `<button class="btn small" data-act="qfAvgPrev" title="Totalen for ${+S.year - 1} delt med 12">Snit af ${+S.year - 1}: ${fmt(Math.round(sum(prevL.amounts) / 12))}/md</button>` : ''}${recN ? `<button class="btn small" data-act="qfAvgRec" title="Gennemsnittet af de afstemte måneder bruges i resten af året">Snit af afstemte måneder i resten af året</button>` : ''}</div>` : ''}
+    </details>
     </div>
     <div class="months" style="margin-top:14px">${l.amounts.map((v, m) => `<label>${MON[m]}${isRec(B(), m) ? ' ✓' : ''}${l.plan && l.plan[m] != null && +l.plan[m] !== +v ? ` <span class="muted">(budget ${fmt(l.plan[m])})</span>` : ''}<input class="num lm" inputmode="decimal" data-m="${m}" value="${kr0(v)}"></label>`).join('')}</div>
-    ${!isNew && l.ends ? `<div class="banner warn" style="margin-top:12px">Udgår – kommer ikke med i budget ${+S.year + 1}. <button class="btn small" data-act="lmUnEnd">Fortryd</button></div>` : ''}
     <p class="muted" style="margin:8px 0 0">I alt: <b class="num" id="lmTot">${kr(sum(l.amounts))}</b></p>
-    <label class="chk" style="margin-top:10px"><input type="checkbox" id="lmOne" ${l.oneOff ? 'checked' : ''}><span>Engangspost – nulstilles når næste års budget oprettes</span></label>
-    <label class="chk" style="margin-top:10px"><input type="checkbox" id="lmRiseOk" ${!isNew && riseOk(l) ? 'checked' : ''}><span>Prisændringen er forklaret – vis den ikke som stigning</span></label>
-    <label class="field" style="margin-top:10px">Ved nyt år<select class="inp" id="lmAvg"><option value="">Automatisk${isVarLine(l) && cat.type === 'expense' ? ' (gennemsnit – svingende forbrug)' : ''}</option><option value="1" ${l.avg === true ? 'selected' : ''}>Gennemsnit: årets total ÷ 12 hver måned</option><option value="0" ${l.avg === false ? 'selected' : ''}>Samme mønster som i år</option></select></label>
-    <label class="chk"><input type="checkbox" id="lmKeep" ${l.keep ? 'checked' : ''}><span>Behold beløb præcis som i år ved nyt år (ingen automatisk justering)</span></label>
-    ${resetsYearly(cat) ? `<label class="chk"><input type="checkbox" id="lmFixed" ${isFixedPost(l) ? 'checked' : ''}><span>Fast post i ${esc(cat.name)} – bevares med 0 kr ved nyt år (ellers fjernes den)</span></label>` : ''}
+    ${endChoice(l, cat, isNew)}
     ${isNew ? '' : knownBox(l, opts.kn)}
-    ${isNew ? '' : endBox(l, cat)}
     <label class="field" style="margin-top:8px">Note<textarea class="inp" id="lmNote" placeholder="fx aftalenr., hvornår prisen ændres…">${esc(l.note || '')}</textarea></label>
+    <details class="fold" style="margin-top:10px" ${(!isNew && (riseOk(l) || l.avg != null || l.keep)) ? 'open' : ''}><summary>Flere indstillinger</summary>
+      <label class="field" style="margin-top:8px">Ved nyt år<select class="inp" id="lmAvg"><option value="">Automatisk${isVarLine(l) && cat.type === 'expense' ? ' (gennemsnit – svingende forbrug)' : ''}</option><option value="1" ${l.avg === true ? 'selected' : ''}>Gennemsnit: årets total ÷ 12 hver måned</option><option value="0" ${l.avg === false ? 'selected' : ''}>Samme mønster som i år</option></select></label>
+      <label class="chk" style="margin-top:8px"><input type="checkbox" id="lmKeep" ${l.keep ? 'checked' : ''}><span>Behold beløb præcis som i år ved nyt år (ingen automatisk justering)</span></label>
+      <label class="chk"><input type="checkbox" id="lmRiseOk" ${!isNew && riseOk(l) ? 'checked' : ''}><span>Prisændringen er forklaret – vis den ikke som stigning</span></label>
+      ${resetsYearly(cat) ? `<label class="chk"><input type="checkbox" id="lmFixed" ${isFixedPost(l) ? 'checked' : ''}><span>Fast post i ${esc(cat.name)} – bevares med 0 kr ved nyt år (ellers fjernes den)</span></label>` : ''}
+    </details>
     ${isNew ? '' : docsHtml(l.id)}
-    <div class="acts">${isNew ? '' : '<button class="btn danger" data-act="lmEnd">Udgår / slet…</button><button class="btn" data-act="lmBulk">⇉ Ret flere måneder</button>'}<span class="sp"></span><button class="btn" data-act="close">Annuller</button><button class="btn primary" data-act="lmSave">Gem</button></div>`,
+    <div class="acts">${isNew ? '' : '<button class="btn danger" data-act="lmEnd">Slet…</button><button class="btn" data-act="lmBulk">⇉ Ret flere måneder</button>'}<span class="sp"></span><button class="btn" data-act="close">Annuller</button><button class="btn primary" data-act="lmSave">Gem</button></div>`,
     sheet => {
       const tot = () => $('#lmTot').textContent = kr(sum($$('.lm', sheet).map(i => parseNum(i.value))));
+      sheet.addEventListener('change', e => { if (e.target.name === 'lmEndSt'){ const v = e.target.value; $$('[name=lmEndSt]', sheet).forEach(r => r.closest('.chip').classList.toggle('on', r.checked)); $('#lmEndRow').style.display = v === 'end' ? '' : 'none'; $('#lmOneHint').style.display = v === 'one' ? '' : 'none'; } });
       sheet.addEventListener('input', e => { if (e.target.classList.contains('lm')) tot(); });
       sheet.addEventListener('focusout', e => { if (e.target.classList.contains('lm')) e.target.value = kr0(parseNum(e.target.value)); });
       const setAll = arr => { $$('.lm', sheet).forEach((i, m) => i.value = kr0(arr[m])); tot(); };
@@ -1187,7 +1231,7 @@ function lineModal(cid, lid, opts = {}){
         qfSpread(){ const y = parseNum($('#qfYear').value); const per = Math.round(y / 12); setAll(Array.from({length:12}, (_, m) => m === 11 ? y - per * 11 : per)); },
         qfFromApply(){ const a = parseNum($('#qfAmt').value), f = +$('#qfFreq').value, s0 = +$('#qfStart').value, from = +$('#qfFrom').value; const arr = cur(); for (let m = from; m < 12; m++) arr[m] = (((m - s0) % f) + f) % f === 0 ? a : 0; setAll(arr); toast('Ny pris fra ' + MONL[from] + ' – husk at gemme'); },
         lmBulk(){ closeModal(); bulkModal(cid, lid); },
-        lmEnd(){ closeModal(); endModal(cid, lid); },
+        lmEnd(){ closeModal(); delModal(cid, lid); },
         lmUnEnd(){ if (l.endBackup) l.endBackup.forEach((v, m) => { if (!isRec(B(), m) && !+l.amounts[m]) l.amounts[m] = v; }); delete l.endBackup; delete l.ends; delete l.endDate; delete l.freedTo; const nb = S.years[String(+S.year + 1)]; if (nb && nb.removed) nb.removed = nb.removed.filter(x => x !== l.id); saveYear(); closeModal(); render(); toast('Posten fortsætter i ' + (+S.year + 1)); },
         lmDelete(){ confirmModal(`Slet "${esc(l.name)}" fra ${esc(S.year)}?`, 'Slet', () => { cat.lines = cat.lines.filter(x => x.id !== l.id); const bb = B(); if (bb.linked){ bb.removed = bb.removed || []; bb.removed.push(l.id); } saveYear(); render(); }); },
         lmSave(){
@@ -1195,13 +1239,15 @@ function lineModal(cid, lid, opts = {}){
           const target = isNew ? {id: uniqueLineId(name)} : l;
           const na = cur(); if (!isNew) na.forEach((v, m) => { if (isRec(B(), m) && v !== (+l.amounts[m] || 0)) keepPlan(target, m); });
           Object.assign(target, {name, amounts: na});
-          const one = $('#lmOne').checked, keep = $('#lmKeep').checked, note = $('#lmNote').value.trim();
+          const endSt = (sheet.querySelector('[name=lmEndSt]:checked') || {}).value || 'go', one = endSt === 'one', keep = $('#lmKeep').checked, note = $('#lmNote').value.trim();
           { delete target.account; if ($('#lmRiseOk').checked) target.riseOk = info(target).last; else delete target.riseOk; }
           { const av = $('#lmAvg').value; av === '1' ? target.avg = true : av === '0' ? target.avg = false : delete target.avg; }
           one ? target.oneOff = true : delete target.oneOff; keep ? target.keep = true : delete target.keep; note ? target.note = note : delete target.note;
           if ($('#lmFixed')) target.keepInReset = $('#lmFixed').checked;
           if ($('#knKind')) setKnown(target, $('#knKind').value, $('#knVal').value, $('#knFrom').value, $('#knFreq') ? $('#knFreq').value : '');
-          if ($('#edY')){ const ey = $('#edY').value, em = $('#edM').value; if (ey && em !== ''){ target.endDate = ymStr(+ey, +em); const z = applyEndToYear(B(), target); if (z) toast(`${target.name} slutter efter ${ymLabel(target.endDate)} – ${z} måned${z > 1 ? 'er' : ''} sat til 0`); } else { delete target.endDate; delete target.freedTo; } if (!isNew) propagateEnd(target); }
+          if (endSt === 'end'){ target.endDate = ymStr(+$('#edY').value, +$('#edM').value); const z = applyEndToYear(B(), target); if (z) toast(`${target.name} slutter efter ${ymLabel(target.endDate)} – ${z} måned${z > 1 ? 'er' : ''} sat til 0`); }
+          else { if ((target.endDate || target.ends) && !isNew) Object.keys(S.years).filter(y => +y > +S.year).forEach(y => { const yb = S.years[y]; if (yb.removed && yb.removed.includes(target.id)){ yb.removed = yb.removed.filter(x => x !== target.id); saveYear(y); } }); if (target.endDate || target.ends){ if (target.endBackup) target.endBackup.forEach((v, m) => { if (!isRec(B(), m) && !+target.amounts[m]) target.amounts[m] = v; }); } delete target.endDate; delete target.freedTo; delete target.ends; delete target.endBackup; }
+          if (!isNew) propagateEnd(target);
           if (isNew) cat.lines.push(target);
           saveYear(); closeModal(); render();
         }
@@ -1696,13 +1742,13 @@ function reminderItems(b){
   const items = [], now = new Date(), y = now.getFullYear(), cm = now.getMonth(), dd = d => d.getDate() + '. ' + MONL[d.getMonth()] + (d.getFullYear() !== y ? ' ' + d.getFullYear() : '');
   if (+b.year === y){ const open = []; for (let m = 0; m < cm; m++) if (!isRec(b, m)) open.push(MONL[m]); if (open.length) items.push(['✅', `Afstem ${open.length > 3 ? open.length + ' måneder (' + open.slice(-2).join(', ') + ' m.fl.)' : open.join(', ')}`, 'href', '#afstem']); }
   if (+b.year === y && cm >= 9 && !S.years[String(y + 1)]) items.push(['🗓', `Opret budget ${y + 1} – det bygger på årets registrerede beløb`, 'act', 'newYear']);
-  if (+b.year === y) for (const {l} of insLines(b)){
-    const m = (S.ins.lines || {})[l.id]; if (!m || !m.renewal || !sum(l.amounts)) continue;
-    let rd = new Date(y, +m.renewal - 1, 1); if (rd < now) rd = new Date(y + 1, +m.renewal - 1, 1);
-    const days = (rd - now) / 864e5; if (days > 75) continue;
-    const dl = new Date(rd.getTime() - 30 * 864e5);
-    items.push(['🛡', `${l.name}${m.provider ? ' (' + m.provider + ')' : ''} fornyes ${dd(rd)} – ${dl > now ? 'opsig senest ' + dd(dl) + ', hvis I vil skifte' : 'fristen er passeret, men I kan skifte med kort varsel mod gebyr'}`, 'href', '#forsikringer']);
-  }
+  if (+b.year === y){ const grp = {};
+    for (const {l} of insLines(b)){
+      const m = (S.ins.lines || {})[l.id]; if (!m || !m.renewal || !sum(l.amounts) || viaOf(l) !== 'selskab') continue;
+      let rd = new Date(y, +m.renewal - 1, 1); if (rd < now) rd = new Date(y + 1, +m.renewal - 1, 1);
+      if ((rd - now) / 864e5 > 75) continue; const k = (m.provider || '') + '|' + rd.getTime(); (grp[k] = grp[k] || {rd, prov: m.provider, names: []}).names.push(l.name); }
+    for (const g of Object.values(grp)){ const dl = new Date(g.rd.getTime() - 30 * 864e5);
+      items.push(['🛡', `${g.names.join(', ')}${g.prov ? ' (' + g.prov + ')' : ''} fornyes ${dd(g.rd)} – ${dl > now ? 'opsig senest ' + dd(dl) + ', hvis I vil skifte' : 'fristen er passeret, men I kan skifte med kort varsel mod gebyr'}`, 'href', '#forsikringer']); } }
   const rs = reviewState(); if (rs && rs.isDue) items.push(['🛡', `Tid til forsikringsgennemgang${rs.r.lastSwitch ? ' – ' + REVIEW_YEARS + ' år siden skiftet' : ''}${rs.canSnooze ? '' : ' (kan ikke udsættes mere)'}`, 'act', 'revOpen']);
   { const nowd = new Date(), py = String(nowd.getFullYear() - 1); if (nowd.getMonth() <= 1 && S.years[py] && !(S.years[py].reportSeen)) items.push(['📋', `Årsopgørelsen for ${py} er klar`, 'act', 'yearReport']); }
   { const nd = S.years[String(new Date().getFullYear() + 1)]; if (nd && nd.draft && String(+b.year) !== nd.year + '' ) items.push(['📝', `Udkast til budget ${nd.year} står klar – gennemse og godkend`, 'year2', String(nd.year)]); }
@@ -1716,9 +1762,12 @@ function reminderItems(b){
   if (nx && nx.linked){ const p2 = pendingFromPrev(String(+b.year + 1)).length; if (p2) items.push(['🔄', `${p2} ændring${p2 > 1 ? 'er' : ''} i år venter på at komme med i ${+b.year + 1}`, 'year', String(+b.year + 1)]); }
   return items;
 }
+const REM_LOW = ['🧹', '📋', '🔌', '🔄'];
 function remindersHtml(b){
-  const items = reminderItems(b); if (!items.length) return '';
-  return `<div class="card"><h2>Huskeliste</h2>${items.map(([ic, t, k, v]) => `<div class="idea" style="padding:8px 0;display:flex;gap:10px;align-items:center"><span aria-hidden="true">${ic}</span><span style="flex:1">${esc(t)}</span>${k === 'href' ? `<a class="btn small" href="${v}">Åbn</a>` : k === 'year' ? `<button class="btn small" data-act="gotoYearReview" data-y="${v}">Gennemse</button>` : k === 'year2' ? `<button class="btn small" data-act="gotoYear" data-y="${v}">Gennemse</button>` : String(v).startsWith('childKnownR:') ? (p => `<button class="btn small" data-act="childKnown" data-c="${p[1]}" data-l="${p[2]}" data-ev="${p[3]}" data-m="${p[4]}">Notér</button>`)(String(v).split(':')) : `<button class="btn small" data-act="${v}">Åbn</button>`}</div>`).join('')}</div>`;
+  const all = reminderItems(b); if (!all.length) return '';
+  const hi = all.filter(x => !REM_LOW.includes(x[0])), lo = all.filter(x => REM_LOW.includes(x[0])), items = hi.concat(lo), show = Math.max(4, hi.length), more = items.length - show;
+  const row = ([ic, t, k, v]) => `<div class="idea" style="padding:8px 0;display:flex;gap:10px;align-items:center"><span aria-hidden="true">${ic}</span><span style="flex:1">${esc(t)}</span>${k === 'href' ? `<a class="btn small" href="${v}">Åbn</a>` : k === 'year' ? `<button class="btn small" data-act="gotoYearReview" data-y="${v}">Gennemse</button>` : k === 'year2' ? `<button class="btn small" data-act="gotoYear" data-y="${v}">Gennemse</button>` : String(v).startsWith('childKnownR:') ? (p => `<button class="btn small" data-act="childKnown" data-c="${p[1]}" data-l="${p[2]}" data-ev="${p[3]}" data-m="${p[4]}">Notér</button>`)(String(v).split(':')) : `<button class="btn small" data-act="${v}">Åbn</button>`}</div>`;
+  return `<div class="card"><h2>Huskeliste${items.length > 1 ? ` <span class="hint">${items.length} punkter</span>` : ''}</h2>${items.slice(0, show).map(row).join('')}${more > 0 ? `<details class="fold rem-more"><summary>${more} mindre vigtig${more > 1 ? 'e' : 't'}</summary>${items.slice(show).map(row).join('')}</details>` : ''}</div>`;
 }
 
 /* ---------- TOTALOVERBLIK ---------- */
@@ -2671,6 +2720,7 @@ function confirmModal(text, okLabel, ok){
   openModal(`<h2>Er du sikker?</h2><p>${text}</p><div class="acts"><span class="sp"></span><button class="btn" data-act="close">Annuller</button><button class="btn primary" data-act="cfOk">${okLabel}</button></div>`, () => { MODAL_ACTS = {cfOk(){ closeModal(); ok(); }}; });
 }
 $('#modal').addEventListener('mousedown', e => { if (e.target.id === 'modal') closeModal(); });
+document.addEventListener('click', e => { document.querySelectorAll('details.menu[open]').forEach(d => { if (!d.contains(e.target) || e.target.closest('.menu-pop [data-act]')) d.removeAttribute('open'); }); });
 let toastT; function toast(t){ const el = $('#toast'); el.textContent = t; el.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => el.classList.remove('on'), 2600); }
 
 /* ---------- actions ---------- */

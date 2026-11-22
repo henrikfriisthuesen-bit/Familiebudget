@@ -366,7 +366,7 @@ function recommendedHtml(){
 }
 
 /* ---------- state ---------- */
-const S = { f:{q:'', cat:'', kind:'', m:new Date().getMonth()}, qsel:null, years:{}, year:null, ins:{lines:{}}, hh:{}, quotes:{}, sv:{items:{}}, db:null, dbState:'loading', tab:'oversigt', ai:null, aiBusy:false, dl:null, sample:null, assets:null, docs:{lines:{}}, goals:{items:{}}, rules:{map:{}}, insrev:{}, review:{} };
+const S = { f:{q:'', cat:'', kind:'', m:new Date().getMonth()}, qsel:null, years:{}, year:null, ins:{lines:{}}, hh:{}, quotes:{}, sv:{items:{}}, db:null, dbState:'loading', tab:'oversigt', ai:null, aiBusy:false, dl:null, sample:null, assets:null, docs:{lines:{}}, goals:{items:{}}, rules:{map:{}}, insrev:{}, review:{}, chg:{months:{}} };
 const B = () => S.years[S.year];
 
 /* ---------- calc ---------- */
@@ -472,6 +472,7 @@ const saveGoals = () => queueSave('settings/goals', () => S.goals, 600);
 const saveRules = () => queueSave('settings/bankrules', () => S.rules, 600);
 const saveInsrev = () => queueSave('settings/insreview', () => S.insrev, 300);
 const saveReview = () => queueSave('insurance/review', () => S.review, 300);
+const saveChg = () => queueSave('settings/charging', () => S.chg, 400);
 async function saveQuote(q){ if (!S.db) return; setSync('Gemmer…'); try { await S.db.collection('quotes').doc(q.id).set(clone(q)); setSync('Gemt ✓'); } catch(e){ setSync('Kunne ikke gemme', true); } }
 async function delQuote(id){ if (!S.db) return; try { await S.db.collection('quotes').doc(id).delete(); } catch(e){} }
 
@@ -513,6 +514,7 @@ async function initDb(){
   sub('settings/bankrules', 'rules', {map:{}});
   sub('settings/insreview', 'insrev', {});
   sub('insurance/review', 'review', {});
+  sub('settings/charging', 'chg', {months:{}});
   db.collection('quotes').onSnapshot(snap => {
     const q = {}; snap.docs.forEach(d => q[d.id] = d.data());
     if (JSON.stringify(q) !== JSON.stringify(S.quotes)){ S.quotes = q; softRender(); }
@@ -822,7 +824,14 @@ document.addEventListener('keydown', e => {
 /* Konverterer gamle prisændringer (noter som "Pr. 1/1 2027: 477,-" og nye priser i forsikringsdetaljer) til kendte ændringer */
 const NOTE_PRICE_RE = /(?:pr\.?|fra|per)\s*(?:(\d{1,2})\s*[\/.]\s*(\d{1,2})\s*[\/.]?\s*)?(\d{4})\s*:?\s*(?:kr\.?\s*)?(\d[\d.]*(?:,\d+)?)(?:\s*,-|\s*kr\.?)?/i;
 let migSig = '';
+function applyPendingNext(){
+  const a = S.chg && S.chg.applyNext; if (!a || !S.years[a.year]) return;
+  const hit = findLineIn(S.years[a.year], a.id) || allLines(S.years[a.year], l => /clever/i.test(l.name)).map(x => ({l: x.l}))[0];
+  if (hit){ hit.l.next = Object.assign({}, a.next); saveYear(a.year); toast(`${hit.l.name}: ${fmt(a.next.val)} kr/md i ${a.next.year} er noteret`); }
+  S.chg = Object.assign({}, S.chg); delete S.chg.applyNext; saveChg(); softRender();
+}
 function migrateKnown(){
+  applyPendingNext();
   const ys = Object.keys(S.years); if (!ys.length) return;
   const sig = ys.map(y => y + ':' + JSON.stringify(S.years[y]).length).join('|') + '|' + JSON.stringify(S.ins || {}).length; if (sig === migSig) return; migSig = sig;
   const changedYears = new Set(); let insCh = false, n = 0;
@@ -1623,6 +1632,7 @@ function reminderItems(b){
   }
   const rs = reviewState(); if (rs && rs.isDue) items.push(['🛡', `Tid til forsikringsgennemgang${rs.r.lastSwitch ? ' – ' + REVIEW_YEARS + ' år siden skiftet' : ''}${rs.canSnooze ? '' : ' (kan ikke udsættes mere)'}`, 'act', 'revOpen']);
   { const nowd = new Date(), py = String(nowd.getFullYear() - 1); if (nowd.getMonth() <= 1 && S.years[py] && !(S.years[py].reportSeen)) items.push(['📋', `Årsopgørelsen for ${py} er klar`, 'act', 'yearReport']); }
+  { const mk = chgMissing(); if (mk) items.push(['🔌', `Notér opladning for ${ymNice(mk)} i Ladeaftale-tjek`, 'act', 'chgAdd']); const sm = chgSummary(); if (sm && sm.diff > chgP().threshold) items.push(['🔌', `${chgP().provider} koster ca. ${kr(sm.diff)} mere om året end ${sm.bestName.toLowerCase()} – se Ladeaftale-tjek`, 'href', '#besparelser']); }
   { const cu = cleanupCandidates(b).filter(x => x.def).length; if (cu && !b.cleanSeen) items.push(['🧹', `${cu} post${cu > 1 ? 'er' : ''} uden beløb kan ryddes op`, 'act', 'cleanup']); }
   for (const x of childEvents(b)) if (x.y === +b.year + 1 && x.hit && !knownChange(x.hit.l, x.y) && x.ev !== 'stop' && (new Date().getFullYear() === +b.year)) items.push(['👧', `${x.k.name} fylder ${x.age} i ${x.y} – notér den nye ydelse`, 'act', 'childKnownR:' + x.hit.c.id + ':' + x.hit.l.id + ':' + x.ev + ':' + (x.bm != null ? x.bm + 2 : 1)]);
   const pend = b.linked ? pendingFromPrev(S.year).length : 0;
@@ -1939,6 +1949,120 @@ function svTotals(items){
   return {pot, real, open};
 }
 function updateSvSummary(){ const t = svTotals(analyze(B())); const r = $('[data-sv="real"]'); if (r) r.textContent = kr(t.real); }
+/* ---------- LADEAFTALE-TJEK ---------- */
+const CHG_DEF = {provider: 'Clever One', altHome: 1.05, altPublic: 2.6, altBox: 120, youFixed: 240, youAdd: 0.15, threshold: 1000, elProvider: 'Clever Power', elMarkup: 0, elAltSub: 18, elAltMarkup: 0};
+const chgP = () => Object.assign({}, CHG_DEF, (S.chg || {}).params || {});
+const ymKey = (y, m) => y + '-' + String(m + 1).padStart(2, '0');
+const ymNice = k => { const [y, m] = k.split('-').map(Number); return MONL[m - 1].slice(0, 3) + ' ' + String(y).slice(2); };
+function chgRows(){
+  const P = chgP(), ms = (S.chg || {}).months || {}, keys = Object.keys(ms).sort(), shares = [];
+  keys.forEach(k => { const x = ms[k]; if (+x.total && +x.home && x.total >= x.home) shares.push((x.total - x.home) / x.total); });
+  const pubShare = shares.length ? shares.reduce((a, b) => a + b, 0) / shares.length : 0.15;
+  return keys.map(k => { const x = ms[k], home = +x.home || 0, pub = +x.total ? Math.max(0, x.total - home) : Math.round(home * pubShare / (1 - pubShare)), est = !+x.total;
+    const hp = home ? (+x.homeKr || 0) / home : P.altHome;
+    const clever = (+x.sub || 0) + (+x.tillaeg || 0);
+    const alt = home * P.altHome + pub * P.altPublic + P.altBox;
+    const you = home * hp + pub * (hp + P.youAdd) + P.youFixed;
+    return {k, home, pub, est, total: home + pub, hp, clever, alt, you, tillaeg: +x.tillaeg || 0, perKwh: home + pub ? clever / (home + pub) : 0}; });
+}
+function chgSummary(){
+  const rows = chgRows().slice(-12); if (!rows.length) return null;
+  const s = f => rows.reduce((a, r) => a + r[f], 0), n = rows.length, k = 12 / n;
+  const clever = s('clever') * k, alt = s('alt') * k, you = s('you') * k, kwh = s('total') * k, pub = s('pub') * k;
+  const best = Math.min(alt, you), diff = clever - best;
+  const last3 = rows.slice(-3), till3 = last3.reduce((a, r) => a + r.tillaeg, 0) / Math.max(1, last3.length);
+  const fc = 849 * 0 + ((S.chg || {}).months && rows.length ? (+(S.chg.months[rows[n - 1].k] || {}).sub || 849) : 849) + Math.round(rows.reduce((a, r) => a + r.tillaeg, 0) / n);
+  return {rows, n, clever, alt, you, best, diff, kwh, pub, till3, fc, bestName: alt <= you ? 'Betal pr. kWh hos andet selskab' : 'Clever You'};
+}
+function chgMissing(){ const now = new Date(); if (now.getDate() < 20) now.setMonth(now.getMonth() - 1); const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1), k = ymKey(prev.getFullYear(), prev.getMonth()); const ms = (S.chg || {}).months || {}; return Object.keys(ms).length && !ms[k] ? k : null; }
+function chgCard(){
+  const sm = chgSummary(), P = chgP(), b = B(), cl = allLines(b, (l, c) => /clever|opladning|ladeabonnement/i.test(l.name) && c.type !== 'income')[0];
+  if (!sm) return `<div class="card"><h2>Ladeaftale-tjek</h2><p style="margin:0 0 10px">Notér hver måned jeres opladning fra Clevers opgørelse og elregningen. Så holder appen øje med, om ladeaftalen stadig kan betale sig.</p><button class="btn small primary" data-act="chgAdd">+ Tilføj måned</button></div>`;
+  const ok = sm.diff <= P.threshold, max = Math.max(...sm.rows.map(r => Math.max(r.clever, r.alt, r.you)), 1);
+  const bars = `<div style="display:flex;gap:6px;align-items:flex-end;height:120px;margin:10px 0 4px">${sm.rows.map(r => `<div style="flex:1;display:flex;gap:2px;align-items:flex-end;height:100%" data-tip="<b>${ymNice(r.k)}</b><br>${esc(P.provider)}: ${kr(r.clever)}<br>Pr. kWh andet selskab: ${kr(r.alt)}<br>Clever You: ${kr(r.you)}<br>${fmt(r.total)} kWh${r.est ? ' (ude skønnet)' : ''} · heraf ude ${fmt(r.pub)}"><i style="flex:1;background:var(--s1);border-radius:3px 3px 0 0;height:${(r.clever / max * 100).toFixed(1)}%"></i><i style="flex:1;background:var(--s2);border-radius:3px 3px 0 0;height:${(r.alt / max * 100).toFixed(1)}%"></i></div>`).join('')}</div>
+    <div style="display:flex;gap:6px;font-size:11px;color:var(--ink-3)">${sm.rows.map(r => `<span style="flex:1;text-align:center">${ymNice(r.k).split(' ')[0]}</span>`).join('')}</div>
+    <div class="legend" style="margin-top:6px"><span><i style="background:var(--s1)"></i>${esc(P.provider)}</span><span><i style="background:var(--s2)"></i>Betal pr. kWh, andet selskab</span></div>`;
+  const miss = chgMissing();
+  return `<div class="card"><h2 style="display:flex;gap:8px;align-items:center"><span style="flex:1">Ladeaftale-tjek <span class="hint">${esc(P.provider)} · seneste ${sm.n} måneder</span></span><button class="btn small" data-act="chgAdd">+ Tilføj måned</button></h2>
+    <div class="tiles" style="grid-template-columns:repeat(4,minmax(0,1fr))">${tile(esc(P.provider), kr(sm.clever), 'pr. år')}${tile('Bedste alternativ', kr(sm.best), esc(sm.bestName))}${tile(ok ? 'Status' : 'Kan spares', ok ? '<span class="st-good">✓ Fortsæt</span>' : `<span class="st-crit">${kr(sm.diff)}</span>`, ok ? (sm.diff > 0 ? `alternativ ${kr(sm.diff)} billigere – under grænsen` : `${kr(-sm.diff)} billigere end alternativ`) : 'pr. år – overvej at skifte')}${tile('Forbrug', fmt(sm.kwh) + ' kWh', 'pr. år · ' + Math.round(sm.pub / Math.max(1, sm.kwh) * 100) + ' % ude')}</div>
+    ${miss ? `<div class="banner warn">Mangler tal for ${ymNice(miss)}. <button class="btn small" data-act="chgAdd" data-k="${miss}">Tilføj</button></div>` : ''}
+    ${sm.till3 > 250 ? `<div class="banner warn">Energitillægget er i snit ${kr(sm.till3)}/md de seneste 3 måneder. Holder det sig, så tjek igen om et par måneder.</div>` : ''}
+    ${bars}
+    <p class="muted" style="font-size:13px;margin:8px 0 0">Forventet ${esc(P.provider)} næste år: ca. <b>${kr(sm.fc)}/md</b> (abonnement + gns. energitillæg).${cl ? ` <button class="btn small" data-act="chgKnown" data-c="${cl.c.id}" data-l="${cl.l.id}" data-v="${Math.round(sm.fc / 10) * 10}">Brug i ↗ Priser ${+S.year + 1}</button>` : ''}</p>
+    ${elSection()}
+    <details class="fold" style="margin-top:8px"><summary>Måneder og forudsætninger</summary>
+      <div class="tscroll" style="margin-top:6px"><table class="t" style="font-size:13px"><thead><tr><th>Måned</th><th>kWh i alt</th><th>Hjemme</th><th>Ude</th><th>Hjemme kr/kWh</th><th>Tillæg</th><th>${esc(P.provider)}</th><th>Andet selskab</th><th>Clever You</th><th></th></tr></thead><tbody>
+      ${sm.rows.slice().reverse().map(r => `<tr><td>${ymNice(r.k)}</td><td class="num">${fmt(r.total)}${r.est ? '*' : ''}</td><td class="num">${fmt(r.home)}</td><td class="num">${fmt(r.pub)}</td><td class="num">${r.hp.toFixed(2).replace('.', ',')}</td><td class="num">${fmt(r.tillaeg)}</td><td class="num">${fmt(r.clever)}</td><td class="num">${fmt(r.alt)}</td><td class="num">${fmt(r.you)}</td><td><button class="btn ghost small" data-act="chgAdd" data-k="${r.k}">Ret</button></td></tr>`).join('')}</tbody></table></div>
+      <p class="muted" style="font-size:12.5px">* Opladning ude er skønnet ud fra de andre måneder. ${esc(P.provider)}: abonnement + energitillæg – strømmen hjemme modregnes. Andet selskab: hjemme ${String(P.altHome).replace('.', ',')} kr/kWh, ude ${String(P.altPublic).replace('.', ',')} kr/kWh og ladeboks ${P.altBox} kr/md. Clever You: ${P.youFixed} kr/md + jeres egen strømpris (+${String(P.youAdd).replace('.', ',')} kr ude).</p>
+      <button class="btn small" data-act="chgParams">Ret forudsætninger</button></details></div>`;
+}
+function elRows(){ const ms = (S.chg || {}).months || {}; return Object.keys(ms).sort().filter(k => +ms[k].elKwh).map(k => { const x = ms[k]; return {k, kwh: +x.elKwh, house: Math.max(0, +x.elKwh - (+x.home || 0)), price: +x.elPrice || 0, bill: +x.elBill || 0, sub: +x.elSub || 0}; }); }
+function elSection(){
+  const rows = elRows().slice(-12); if (!rows.length) return '';
+  const P = chgP(), n = rows.length, k = 12 / n, s = f => rows.reduce((a, r) => a + r[f], 0);
+  const bill = s('bill') * k, kwh = s('kwh') * k, house = s('house') * k, sub = rows[n - 1].sub || 59;
+  const save = (sub - P.elAltSub) * 12 + kwh * ((P.elMarkup - P.elAltMarkup) / 100);
+  const last = rows[n - 1], prev = rows.slice(-4, -1), avgP = prev.length ? prev.reduce((a, r) => a + r.price, 0) / prev.length : last.price;
+  const max = Math.max(...rows.map(r => r.bill), 1);
+  return `<div class="box" style="margin-top:12px"><h4>Elregningen (${esc(P.elProvider)}) <span class="hint">seneste ${n} måneder</span></h4>
+    <div class="tiles" style="grid-template-columns:repeat(3,minmax(0,1fr))">${tile('Elregning efter modregning', kr(bill), 'pr. år · ' + kr(bill / 12) + '/md')}${tile('Husstanden bruger', fmt(house) + ' kWh', 'pr. år (uden bilen)')}${tile('Elpris ' + ymNice(last.k), (last.price / 100).toFixed(2).replace('.', ',') + ' kr/kWh', 'spotpris inkl. moms' + (avgP ? ` · ${last.price >= avgP ? '+' : ''}${Math.round((last.price / avgP - 1) * 100)} % mod de 3 mdr. før` : ''))}</div>
+    <div style="display:flex;gap:6px;align-items:flex-end;height:70px;margin:10px 0 4px">${rows.map(r => `<i style="flex:1;background:var(--s1);border-radius:3px 3px 0 0;height:${(r.bill / max * 100).toFixed(1)}%" data-tip="<b>${ymNice(r.k)}</b><br>Regning ${kr(r.bill)}<br>${fmt(r.kwh)} kWh i alt, husstand ${fmt(r.house)}<br>Elpris ${(r.price / 100).toFixed(2).replace('.', ',')} kr/kWh"></i>`).join('')}</div>
+    <p style="margin:6px 0 0;font-size:13.5px">${save > 150 ? `Et elselskab med ${P.elAltMarkup} øre i tillæg og ${P.elAltSub} kr/md kunne spare ca. <b>${kr(save)}</b> om året – men så modregnes ladeboksen ikke længere automatisk på elregningen.` : `<span class="st-good">✓ ${esc(P.elProvider)} er blandt de billigste</span> (spotpris + ${String(P.elMarkup).replace('.', ',')} øre, ${fmt(sub)} kr/md) og modregner ladeboksen automatisk.`}</p></div>`;
+}
+function chgModal(k){
+  const now = new Date(); if (!k){ const keys = Object.keys((S.chg || {}).months || {}).sort(), d = new Date(now.getFullYear(), now.getMonth() - 1, 1), lim = ymKey(d.getFullYear(), d.getMonth());
+    let nx = lim; if (keys.length){ const [ly, lm] = keys[keys.length - 1].split('-').map(Number); const n2 = ymKey(lm === 12 ? ly + 1 : ly, lm === 12 ? 0 : lm); nx = n2 <= lim ? n2 : lim; } k = chgMissing() || nx; }
+  const x = ((S.chg || {}).months || {})[k] || {}, last = Object.values((S.chg || {}).months || {}).slice(-1)[0] || {};
+  const ys = [now.getFullYear() - 1, now.getFullYear()];
+  openModal(`<h2>Opladning – måned</h2><p class="muted" style="margin:0 0 10px">Tallene står i Clevers månedlige opgørelse og i elregningen fra Clever Power.</p>
+    <label class="field">Indsæt koden fra Claudes besked (valgfrit)<input class="inp" id="cgPaste" placeholder="CLEVER 2026-11 sub=849 til=… tot=… home=… kr=… el=… pris=… regning=…" autocomplete="off"></label>
+    <div class="row2"><label class="field">Måned<select class="inp" id="cgM">${MONL.map((m, i) => `<option value="${i}" ${+k.split('-')[1] - 1 === i ? 'selected' : ''}>${m}</option>`).join('')}</select></label>
+    <label class="field">År<select class="inp" id="cgY">${ys.map(y => `<option ${+k.split('-')[0] === y ? 'selected' : ''}>${y}</option>`).join('')}</select></label></div>
+    <div class="row2" style="margin-top:10px"><label class="field">Abonnement (kr)<input class="inp num" id="cgSub" inputmode="decimal" value="${kr0(x.sub ?? last.sub ?? 849)}"></label>
+    <label class="field">Energitillæg for måneden (kr)<input class="inp num" id="cgTil" inputmode="decimal" value="${kr0(x.tillaeg)}" placeholder="0"></label></div>
+    <label class="field" style="margin-top:10px">kWh i alt (står ved energitillægget – tom hvis intet tillæg)<input class="inp num" id="cgTot" inputmode="decimal" value="${kr0(x.total)}"></label>
+    <div class="row2" style="margin-top:10px"><label class="field">Hjemme kWh (elregning: modregning af ladeboks)<input class="inp num" id="cgHome" inputmode="decimal" value="${kr0(x.home)}"></label>
+    <label class="field">Modregnet beløb (kr)<input class="inp num" id="cgHomeKr" inputmode="decimal" value="${kr0(x.homeKr)}"></label></div>
+    <h4 style="margin:14px 0 6px;font-size:14px">Elregningen (valgfrit)</h4>
+    <div class="row3"><label class="field">kWh i alt (måleren)<input class="inp num" id="cgElK" inputmode="decimal" value="${kr0(x.elKwh)}"></label>
+    <label class="field">Elpris (øre/kWh)<input class="inp num" id="cgElP" inputmode="decimal" value="${x.elPrice != null ? String(x.elPrice).replace('.', ',') : ''}"></label>
+    <label class="field">At betale (kr)<input class="inp num" id="cgElB" inputmode="decimal" value="${kr0(x.elBill)}"></label></div>
+    <label class="field" style="margin-top:10px;max-width:200px">Abonnement (kr/md)<input class="inp num" id="cgElS" inputmode="decimal" value="${kr0(x.elSub ?? last.elSub ?? 59)}"></label>
+    <p class="muted" style="font-size:12.5px;margin:8px 0 0">Energitillægget for fx oktober står på opgørelsen, der kommer i november.</p>
+    <div class="acts">${x.home != null ? '<button class="btn danger" data-act="cgDel">Slet</button>' : ''}<span class="sp"></span><button class="btn" data-act="close">Annuller</button><button class="btn primary" data-act="cgSave">Gem</button></div>`, () => {
+    const key = () => ymKey(+$('#cgY').value, +$('#cgM').value);
+    $('#cgPaste').addEventListener('input', e => { const t = e.target.value, g = re => { const m = t.match(re); return m ? m[1] : null; };
+      const ym = g(/(\d{4}-\d{2})/); if (ym){ const [yy, mm] = ym.split('-').map(Number); if (![...$('#cgY').options].some(o => +o.value === yy)) $('#cgY').add(new Option(yy, yy)); $('#cgY').value = String(yy); $('#cgM').value = String(mm - 1); }
+      [['sub', '#cgSub'], ['til', '#cgTil'], ['tot', '#cgTot'], ['home', '#cgHome'], ['kr', '#cgHomeKr'], ['el', '#cgElK'], ['pris', '#cgElP'], ['regning', '#cgElB'], ['elabo', '#cgElS']].forEach(([n, id]) => { const v = g(new RegExp(n + '=([-\\d.,]*)')); if (v != null) $(id).value = v === '-' ? '' : v; });
+      if (ym) toast('Tallene er udfyldt – tjek og gem'); });
+    MODAL_ACTS = {
+      cgSave(){ const v = id => { const t = $(id).value.trim(); return t === '' ? null : parseNum(t); };
+        const d = {sub: v('#cgSub'), tillaeg: v('#cgTil') || 0, total: v('#cgTot'), home: v('#cgHome'), homeKr: v('#cgHomeKr')};
+        const ek = v('#cgElK'); if (ek){ Object.assign(d, {elKwh: ek, elPrice: v('#cgElP'), elBill: v('#cgElB'), elSub: v('#cgElS')}); }
+        if (d.home == null){ toast('Skriv mindst kWh hjemme'); return; }
+        S.chg = Object.assign({months: {}}, S.chg); S.chg.months = Object.assign({}, S.chg.months); if (key() !== k) delete S.chg.months[k]; S.chg.months[key()] = d; saveChg(); closeModal(); render(); toast('Gemt'); },
+      cgDel(){ delete S.chg.months[k]; saveChg(); closeModal(); render(); }
+    };
+  });
+}
+function chgParamsModal(){
+  const P = chgP(), f = (id, l, v, h) => `<label class="field">${l}<input class="inp num" id="${id}" inputmode="decimal" value="${String(v).replace('.', ',')}">${h ? `<small class="muted">${h}</small>` : ''}</label>`;
+  openModal(`<h2>Forudsætninger</h2><p class="muted" style="margin:0 0 10px">Ret dem, når priserne ændrer sig, eller når I har fået et konkret tilbud.</p>
+    <label class="field">Nuværende aftale<input class="inp" id="cpProv" value="${esc(P.provider)}"></label>
+    <div class="row2" style="margin-top:10px">${f('cpH', 'Andet selskab – hjemme (kr/kWh)', P.altHome, 'spotpris + nettarif, lader om natten')}${f('cpP', 'Andet selskab – ude (kr/kWh)', P.altPublic)}</div>
+    <div class="row2" style="margin-top:10px">${f('cpB', 'Ladeboks leje/service (kr/md)', P.altBox)}${f('cpYF', 'Clever You (kr/md)', P.youFixed)}</div>
+    <div class="row2" style="margin-top:10px">${f('cpYA', 'Clever You – tillæg ude (kr/kWh)', P.youAdd)}${f('cpT', 'Skift-grænse (kr/år)', P.threshold, 'advarsel når alternativet er så meget billigere')}</div>
+    <h4 style="margin:14px 0 6px;font-size:14px">Elaftale</h4>
+    <label class="field">Nuværende elselskab<input class="inp" id="cpElP" value="${esc(P.elProvider)}"></label>
+    <div class="row3" style="margin-top:10px">${f('cpElM', 'Nuværende tillæg (øre/kWh)', P.elMarkup)}${f('cpElAS', 'Alternativ abonnement (kr/md)', P.elAltSub)}${f('cpElAM', 'Alternativ tillæg (øre/kWh)', P.elAltMarkup)}</div>
+    <div class="acts"><button class="btn ghost" data-act="cpReset">Standard</button><span class="sp"></span><button class="btn" data-act="close">Annuller</button><button class="btn primary" data-act="cpSave">Gem</button></div>`, () => {
+    MODAL_ACTS = {
+      cpSave(){ const n = id => parseNum($(id).value); S.chg = Object.assign({months: {}}, S.chg, {params: {provider: $('#cpProv').value.trim() || 'Clever One', altHome: n('#cpH'), altPublic: n('#cpP'), altBox: n('#cpB'), youFixed: n('#cpYF'), youAdd: n('#cpYA'), threshold: n('#cpT'), elProvider: $('#cpElP').value.trim() || 'Clever Power', elMarkup: n('#cpElM'), elAltSub: n('#cpElAS'), elAltMarkup: n('#cpElAM')}}); saveChg(); closeModal(); render(); },
+      cpReset(){ S.chg = Object.assign({months: {}}, S.chg); delete S.chg.params; saveChg(); closeModal(); render(); }
+    };
+  });
+}
+
 function vSavings(){
   const b = B(), items = analyze(b), t = svTotals(items);
   const manual = Object.entries(S.sv.items).filter(([id]) => id.startsWith('manual:'));
@@ -1948,6 +2072,7 @@ function vSavings(){
     ${tile('Målbart potentiale', kr(t.pot), 'pr. år · kun forslag med beløb')}
     ${tile('Realiseret', `<span data-sv="real">${kr(t.real)}</span>`, 'pr. år · fra gennemførte')}
   </div>`;
+  h += chgCard();
   h += `<div class="card"><h2>Forslag til ${esc(S.year)}</h2>${items.map(it => svRow(it)).join('') || '<p class="muted">Ingen forslag lige nu – flot!</p>'}
     ${manual.map(([id, st]) => svRow({id, icon: '✍', title: st.title, text: st.text || '', pot: st.pot || null, manual: true})).join('')}
     <div style="padding-top:12px"><button class="btn small" data-act="addSv">+ Tilføj egen besparelse</button></div></div>`;
@@ -2428,21 +2553,23 @@ function exportModal(){
   });
 }
 
-function backupData(){ return {format: 'familiebudget-backup', version: 1, exported: new Date().toISOString(), years: S.years, ins: S.ins, hh: S.hh, sv: S.sv, quotes: S.quotes, goals: S.goals, rules: S.rules, docs: S.docs, insrev: S.insrev, review: S.review}; }
+function backupData(){ return {format: 'familiebudget-backup', version: 1, exported: new Date().toISOString(), years: S.years, ins: S.ins, hh: S.hh, sv: S.sv, quotes: S.quotes, goals: S.goals, rules: S.rules, docs: S.docs, insrev: S.insrev, review: S.review, charging: S.chg}; }
 async function importBackup(file){
   let d;
   try { d = JSON.parse(await file.text()); } catch (e){ toast('Filen kunne ikke læses'); return; }
   if (d && d.app === 'familiebudget' && d.docs){ // datafil fra GitHub-synk
     const o = {years: {}, quotes: {}};
     for (const [path, v] of Object.entries(d.docs)){ if (!v || v.deleted) continue; const [col, id] = path.split('/');
-      if (col === 'budgets') o.years[id] = v.data; else if (col === 'quotes') o.quotes[id] = v.data; else if (path === 'insurance/meta') o.ins = v.data; else if (path === 'settings/household') o.hh = v.data; else if (path === 'savings/status') o.sv = v.data; else if (path === 'settings/goals') o.goals = v.data; else if (path === 'settings/bankrules') o.rules = v.data; else if (path === 'docs/index') o.docs = v.data; else if (path === 'settings/insreview') o.insrev = v.data; else if (path === 'insurance/review') o.review = v.data; }
+      if (col === 'budgets') o.years[id] = v.data; else if (col === 'quotes') o.quotes[id] = v.data; else if (path === 'insurance/meta') o.ins = v.data; else if (path === 'settings/household') o.hh = v.data; else if (path === 'savings/status') o.sv = v.data; else if (path === 'settings/goals') o.goals = v.data; else if (path === 'settings/bankrules') o.rules = v.data; else if (path === 'docs/index') o.docs = v.data; else if (path === 'settings/insreview') o.insrev = v.data; else if (path === 'insurance/review') o.review = v.data; else if (path === 'settings/charging') o.charging = v.data; }
     d = Object.assign({format: 'familiebudget-backup'}, o);
   }
+  if (d && d.format === 'familiebudget-backup' && !d.years && d.charging) d.years = {};
   if (!d || d.format !== 'familiebudget-backup' || !d.years){ toast('Det er ikke en sikkerhedskopi fra Familiebudget'); return; }
   const ys = Object.keys(d.years).sort();
-  confirmModal(`Gendan sikkerhedskopien med ${ys.length ? 'budget ' + ys.join(', ') : 'ingen budgetter'}? Eksisterende år med samme årstal bliver overskrevet.`, 'Gendan', async () => {
+  confirmModal(`Gendan sikkerhedskopien med ${ys.length ? 'budget ' + ys.join(', ') : d.charging ? 'ladedata (' + Object.keys(d.charging.months || {}).length + ' måneder)' : 'ingen budgetter'}? Eksisterende år med samme årstal bliver overskrevet.`, 'Gendan', async () => {
     for (const y of ys){ S.years[y] = d.years[y]; saveYear(y); }
     if (d.ins){ S.ins = d.ins; saveIns(); } if (d.hh){ S.hh = d.hh; saveHH(); } if (d.sv){ S.sv = d.sv; saveSv(); }
+    if (d.charging && d.charging.months){ S.chg = Object.assign({}, S.chg, d.charging, {months: Object.assign({}, (S.chg || {}).months, d.charging.months)}); saveChg(); }
     if (d.insrev){ S.insrev = d.insrev; saveInsrev(); } if (d.review){ S.review = d.review; saveReview(); }
     if (d.goals){ S.goals = d.goals; saveGoals(); } if (d.rules){ S.rules = d.rules; saveRules(); } if (d.docs){ S.docs = d.docs; saveDocs(); }
     for (const q of Object.values(d.quotes || {})){ S.quotes[q.id] = q; await saveQuote(q); }
@@ -2497,6 +2624,8 @@ const ACTS = {
   delSv(t){ delete S.sv.items[t.dataset.id]; saveSv(); render(); },
   applyRaise: raiseModal,
   known(){ knownModal(); },
+  chgAdd(t){ chgModal(t && t.dataset ? t.dataset.k : null); }, chgParams(){ chgParamsModal(); },
+  chgKnown(t){ const hit = findLineIn(B(), t.dataset.l); if (!hit) return; const v = +t.dataset.v; hit.l.next = {year: +S.year + 1, kind: 'amt', val: v, from: 1}; saveYear(); render(); toast(`${hit.l.name}: ${fmt(v)} kr/md i ${+S.year + 1} er noteret`); },
   yearReport(t){ const y = (t && t.dataset && t.dataset.y) || reportYear(); const yb = S.years[y]; if (yb && String(y) !== String(S.year) && !yb.reportSeen){ yb.reportSeen = true; saveYear(y); } yearReport(y); },
   cleanup(){ cleanupModal(); }, children(){ childrenModal(); },
   useNoteEnd(t){ const hit = findLineIn(B(), t.dataset.l); if (!hit) return; hit.l.endDate = t.dataset.v; applyEndToYear(B(), hit.l); propagateEnd(hit.l); saveYear(); render(); toast('Slutdato sat: ' + ymLabel(t.dataset.v)); },

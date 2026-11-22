@@ -749,7 +749,7 @@ function budgetList(b){
     if (!mobile){
       h += `<div class="tscroll" style="margin:0;padding:0"><table class="g"><thead><tr><th>Post</th>${MON.map((m, i) => `<th class="${isRec(b, i) ? 'rch' : ''}" title="${isRec(b, i) ? 'Afstemt' : ''}">${m}${isRec(b, i) ? ' ✓' : ''}</th>`).join('')}<th>I alt</th><th></th></tr></thead><tbody>`;
       for (const l of lines){
-        h += `<tr><td class="nm"><button class="lname" data-act="editLine" data-c="${cat.id}" data-l="${l.id}"><span class="t">${esc(l.name)}</span>${l.oneOff ? '<span class="flag">engang</span>' : ''}${knownChange(l, +S.year + 1) ? '<span class="flag" title="' + esc(knownLabel(l.next)) + '">↗ ' + (+S.year + 1) + '</span>' : ''}${l.ends ? '<span class="flag" title="Kommer ikke med i ' + (+S.year + 1) + '">udgår</span>' : ''}${l.account === 'løn' ? '<span class="flag" title="Trækkes fra lønkonto – udlignes med overførsel">lønkonto</span>' : ''}${l.note ? '<span class="flag" title="' + esc(l.note) + '">note</span>' : ''}${((S.docs.lines || {})[l.id] || []).length ? '<span class="flag" title="Dokumenter">📎</span>' : ''}</button></td>
+        h += `<tr><td class="nm"><button class="lname" data-act="editLine" data-c="${cat.id}" data-l="${l.id}"><span class="t">${esc(l.name)}</span>${l.oneOff ? '<span class="flag">engang</span>' : ''}${knownChange(l, +S.year + 1) ? '<span class="flag" title="' + esc(knownLabel(l.next)) + '">↗ ' + (+S.year + 1) + '</span>' : ''}${l.ends ? '<span class="flag" title="Kommer ikke med i ' + (+S.year + 1) + '">udgår</span>' : ''}${l.note ? '<span class="flag" title="' + esc(l.note) + '">note</span>' : ''}${((S.docs.lines || {})[l.id] || []).length ? '<span class="flag" title="Dokumenter">📎</span>' : ''}</button></td>
           ${l.amounts.map((v, m) => { const pl = l.plan && l.plan[m] != null && +l.plan[m] !== +v ? l.plan[m] : null; return `<td class="${isRec(b, m) ? 'rcc' : ''}"><input class="cell ${pl != null ? 'dev' : ''}" inputmode="decimal" data-c="${cat.id}" data-l="${l.id}" data-m="${m}" value="${kr0(v)}" aria-label="${esc(l.name)} ${MONL[m]}" ${pl != null ? `title="Budget: ${fmt(pl)} · Faktisk: ${fmt(v)}"` : ''}></td>`; }).join('')}
           <td class="rt num" data-tot="l:${l.id}">${fmt(sum(l.amounts))}</td><td><button class="btn ghost small" data-act="bulk" data-c="${cat.id}" data-l="${l.id}" title="Ret flere måneder på én gang" aria-label="Ret flere måneder for ${esc(l.name)}">⇉</button></td></tr>`;
       }
@@ -874,7 +874,7 @@ function parseCodes(text){
     if (/^CLEVER\b/i.test(t)){ const k = g(/(\d{4}-\d{2})/); if (!k) continue; const d = {sub: num(g(/sub=([-\d.,]*)/)), tillaeg: num(g(/til=([-\d.,]*)/)) || 0, total: num(g(/tot=([-\d.,]*)/)), home: num(g(/home=([-\d.,]*)/)), homeKr: num(g(/\bkr=([-\d.,]*)/))};
       const el = num(g(/\bel=([-\d.,]*)/)); if (el) Object.assign(d, {elKwh: el, elPrice: num(g(/pris=([-\d.,]*)/)), elBill: num(g(/regning=([-\d.,]*)/)), elSub: num(g(/elabo=([-\d.,]*)/))});
       if (d.home != null) out.push({type: 'clever', k, d, label: `Opladning ${ymNice(k)}: ${fmt(d.home)} kWh hjemme${d.elKwh ? ', elregning ' + kr(d.elBill || 0) : ''}`}); }
-    else if (/^POST\b/i.test(t)){ const id = g(/id=(\S+)/), ko = g(/konto=(\S+)/), fk = g(/forklaret=(\d)/), nm = g(/navn="([^"]+)"/); if (id) out.push({type: 'post', id, nm, ko, fk, label: `${nm || id}: ${ko ? 'betales fra ' + (ACCOUNTS[ko === 'budget' ? '' : ko] || ko) : ''}${fk === '1' ? (ko ? ', ' : '') + 'prisændring forklaret' : ''}`}); }
+    else if (/^POST\b/i.test(t)){ const id = g(/id=(\S+)/), fk = g(/forklaret=(\d)/), nm = g(/navn="([^"]+)"/); if (id && fk === '1') out.push({type: 'post', id, nm, fk, label: `${nm || id}: prisændring forklaret`}); }
     else if (/^PRIS\b/i.test(t)){ const id = g(/id=(\S+)/), y = g(/(?:år|aar)=(\d{4})/), amt = g(/beløb=([-\d.,]+)/), pct = g(/pct=([-\d.,]+)/), fr = g(/fra=(\d{1,2})/), nm = g(/navn="([^"]+)"/);
       if (!id || !y || (amt == null && pct == null)) continue; out.push({type: 'pris', f: {lineId: id, lineName: nm || '', year: +y, kind: pct != null ? 'pct' : 'amt', val: num(pct != null ? pct : amt), from: +fr || 1}, label: `${nm || id}: ${pct != null ? '+' + pct + ' %' : amt + ' kr'} fra ${MONL[(+fr || 1) - 1]} ${y}`}); } }
   return out;
@@ -887,7 +887,7 @@ function codeModal(){
     const prev = () => { const L = parseCodes($('#cdTxt').value); $('#cdPrev').innerHTML = L.length ? L.map(x => '✓ ' + esc(x.label)).join('<br>') : 'Ingen gyldige linjer endnu.'; };
     $('#cdTxt').addEventListener('input', prev);
     MODAL_ACTS = { cdGo(){ const L = parseCodes($('#cdTxt').value); if (!L.length){ toast('Ingen gyldige linjer'); return; } const res = [];
-      L.forEach(x => { if (x.type === 'post'){ let n = 0; Object.keys(S.years).filter(y => +y >= +S.year - 0).forEach(y => { const hit = findLineIn(S.years[y], x.id) || (x.nm ? allLines(S.years[y]).find(z => norm(z.l.name) === norm(x.nm)) : null); if (!hit) return; if (x.ko) { x.ko === 'budget' ? delete hit.l.account : hit.l.account = x.ko; } if (x.fk === '1') hit.l.riseOk = info(hit.l).last; saveYear(y); n++; }); res.push(n ? x.label : (x.nm || x.id) + ': posten blev ikke fundet'); return; }
+      L.forEach(x => { if (x.type === 'post'){ let n = 0; Object.keys(S.years).filter(y => +y >= +S.year - 0).forEach(y => { const hit = findLineIn(S.years[y], x.id) || (x.nm ? allLines(S.years[y]).find(z => norm(z.l.name) === norm(x.nm)) : null); if (!hit) return; delete hit.l.account; if (x.fk === '1') hit.l.riseOk = info(hit.l).last; saveYear(y); n++; }); res.push(n ? x.label : (x.nm || x.id) + ': posten blev ikke fundet'); return; }
         if (x.type === 'clever'){ S.chg = Object.assign({months: {}}, S.chg); S.chg.months = Object.assign({}, S.chg.months, {[x.k]: x.d}); saveChg(); res.push(x.label); }
         else { const r = applyPrice(x.f); res.push(r || (x.f.lineName || x.f.lineId) + ': posten blev ikke fundet');
           const fid = Object.entries((S.finds || {}).items || {}).find(([, f]) => f.lineId === x.f.lineId && +f.year === +x.f.year && (!f.status || f.status === 'ny')); if (fid && r){ S.finds.items[fid[0]].status = 'godkendt'; saveFinds(); } } });
@@ -1071,7 +1071,6 @@ function detectSchedule(amounts){
 }
 const schedLabel = sc => sc.n ? (FREQS.find(x => x[0] === sc.f) || [0, ''])[1].toLowerCase() + (sc.f > 1 ? ' fra ' + MONL[sc.s] : '') : 'ingen betalinger';
 const riseOk = l => l.riseOk != null && +l.riseOk === +info(l).last;
-const ACCOUNTS = {'': 'Budgetkonto', 'løn': 'Lønkonto'};
 const isVarLine = l => { const i = info(l); return i.distinct.length > 3 && i.nz.length >= 6; };
 function knownBox(l, preset){
   const ny = +S.year + 1, kn = preset || (l.next && +l.next.year === ny ? l.next : null), np = nextPrice(l, ny);
@@ -1166,8 +1165,7 @@ function lineModal(cid, lid, opts = {}){
     ${!isNew && l.ends ? `<div class="banner warn" style="margin-top:12px">Udgår – kommer ikke med i budget ${+S.year + 1}. <button class="btn small" data-act="lmUnEnd">Fortryd</button></div>` : ''}
     <p class="muted" style="margin:8px 0 0">I alt: <b class="num" id="lmTot">${kr(sum(l.amounts))}</b></p>
     <label class="chk" style="margin-top:10px"><input type="checkbox" id="lmOne" ${l.oneOff ? 'checked' : ''}><span>Engangspost – nulstilles når næste års budget oprettes</span></label>
-    <div class="row2" style="margin-top:10px"><label class="field">Betales fra<select class="inp" id="lmAcc">${Object.entries(ACCOUNTS).map(([k, v]) => `<option value="${k}" ${(l.account || '') === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
-    <label class="chk" style="align-self:end"><input type="checkbox" id="lmRiseOk" ${!isNew && riseOk(l) ? 'checked' : ''}><span>Prisændringen er forklaret – vis den ikke som stigning</span></label></div>
+    <label class="chk" style="margin-top:10px"><input type="checkbox" id="lmRiseOk" ${!isNew && riseOk(l) ? 'checked' : ''}><span>Prisændringen er forklaret – vis den ikke som stigning</span></label>
     <label class="field" style="margin-top:10px">Ved nyt år<select class="inp" id="lmAvg"><option value="">Automatisk${isVarLine(l) && cat.type === 'expense' ? ' (gennemsnit – svingende forbrug)' : ''}</option><option value="1" ${l.avg === true ? 'selected' : ''}>Gennemsnit: årets total ÷ 12 hver måned</option><option value="0" ${l.avg === false ? 'selected' : ''}>Samme mønster som i år</option></select></label>
     <label class="chk"><input type="checkbox" id="lmKeep" ${l.keep ? 'checked' : ''}><span>Behold beløb præcis som i år ved nyt år (ingen automatisk justering)</span></label>
     ${resetsYearly(cat) ? `<label class="chk"><input type="checkbox" id="lmFixed" ${isFixedPost(l) ? 'checked' : ''}><span>Fast post i ${esc(cat.name)} – bevares med 0 kr ved nyt år (ellers fjernes den)</span></label>` : ''}
@@ -1198,7 +1196,7 @@ function lineModal(cid, lid, opts = {}){
           const na = cur(); if (!isNew) na.forEach((v, m) => { if (isRec(B(), m) && v !== (+l.amounts[m] || 0)) keepPlan(target, m); });
           Object.assign(target, {name, amounts: na});
           const one = $('#lmOne').checked, keep = $('#lmKeep').checked, note = $('#lmNote').value.trim();
-          { const ac = $('#lmAcc').value; ac ? target.account = ac : delete target.account; if ($('#lmRiseOk').checked) target.riseOk = info(target).last; else delete target.riseOk; }
+          { delete target.account; if ($('#lmRiseOk').checked) target.riseOk = info(target).last; else delete target.riseOk; }
           { const av = $('#lmAvg').value; av === '1' ? target.avg = true : av === '0' ? target.avg = false : delete target.avg; }
           one ? target.oneOff = true : delete target.oneOff; keep ? target.keep = true : delete target.keep; note ? target.note = note : delete target.note;
           if ($('#lmFixed')) target.keepInReset = $('#lmFixed').checked;

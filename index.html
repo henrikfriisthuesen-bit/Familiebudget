@@ -366,7 +366,7 @@ function recommendedHtml(){
 }
 
 /* ---------- state ---------- */
-const S = { f:{q:'', cat:'', kind:'', m:new Date().getMonth()}, qsel:null, years:{}, year:null, ins:{lines:{}}, hh:{}, quotes:{}, sv:{items:{}}, db:null, dbState:'loading', tab:'oversigt', ai:null, aiBusy:false, dl:null, sample:null, assets:null, docs:{lines:{}}, goals:{items:{}}, rules:{map:{}}, insrev:{}, review:{}, chg:{months:{}} };
+const S = { f:{q:'', cat:'', kind:'', m:new Date().getMonth()}, qsel:null, years:{}, year:null, ins:{lines:{}}, hh:{}, quotes:{}, sv:{items:{}}, db:null, dbState:'loading', tab:'oversigt', ai:null, aiBusy:false, dl:null, sample:null, assets:null, docs:{lines:{}}, goals:{items:{}}, rules:{map:{}}, insrev:{}, review:{}, chg:{months:{}}, finds:{items:{}} };
 const B = () => S.years[S.year];
 
 /* ---------- calc ---------- */
@@ -473,6 +473,8 @@ const saveRules = () => queueSave('settings/bankrules', () => S.rules, 600);
 const saveInsrev = () => queueSave('settings/insreview', () => S.insrev, 300);
 const saveReview = () => queueSave('insurance/review', () => S.review, 300);
 const saveChg = () => queueSave('settings/charging', () => S.chg, 400);
+const saveFinds = () => queueSave('settings/pricefinds', () => S.finds, 400);
+async function delYearDoc(y){ if (!S.db) return; try { await S.db.collection('budgets').doc(String(y)).delete(); } catch (e){} }
 async function saveQuote(q){ if (!S.db) return; setSync('Gemmer…'); try { await S.db.collection('quotes').doc(q.id).set(clone(q)); setSync('Gemt ✓'); } catch(e){ setSync('Kunne ikke gemme', true); } }
 async function delQuote(id){ if (!S.db) return; try { await S.db.collection('quotes').doc(id).delete(); } catch(e){} }
 
@@ -515,6 +517,7 @@ async function initDb(){
   sub('settings/insreview', 'insrev', {});
   sub('insurance/review', 'review', {});
   sub('settings/charging', 'chg', {months:{}});
+  sub('settings/pricefinds', 'finds', {items:{}});
   db.collection('quotes').onSnapshot(snap => {
     const q = {}; snap.docs.forEach(d => q[d.id] = d.data());
     if (JSON.stringify(q) !== JSON.stringify(S.quotes)){ S.quotes = q; softRender(); }
@@ -540,7 +543,7 @@ const TABS = [['oversigt','Oversigt','Oversigt'],['budget','Budget','Budget'],['
 function renderShell(){
   $('#tabs').innerHTML = TABS.map(([id, n, sh]) => `<button data-tab="${id}" ${S.tab === id ? 'aria-current="page"' : ''}><svg viewBox="0 0 24 24">${ICONS[id]}</svg><span class="tl-l">${n}</span><span class="tl-s">${sh}</span></button>`).join('');
   const ys = Object.keys(S.years).sort();
-  $('#yearSel').innerHTML = ys.map(y => `<option ${y === S.year ? 'selected' : ''}>${y}</option>`).join('') || '<option>–</option>';
+  $('#yearSel').innerHTML = ys.map(y => `<option value="${y}" ${y === S.year ? 'selected' : ''}>${y}${S.years[y] && S.years[y].draft ? ' (udkast)' : ''}</option>`).join('') || '<option>–</option>';
   $('#hh').textContent = B()?.title || '';
 }
 function routeFromHash(){ const h = location.hash.slice(1); if (TABS.some(t => t[0] === h)) S.tab = h; }
@@ -591,7 +594,7 @@ function vOverview(){
     ${tile('Afstemt', rc + '/12 mdr.', rc ? 'afvigelse ift. budget ' + (devRes >= 0 ? '+' : '') + kr(devRes) : '<a href="#afstem">Afstem første måned</a>')}
     ${tile('Månedlig overførsel', kr(needM), 'behov · I overfører ' + kr(avgInc))}
   </div>`;
-  h += adviceHtml(b) + remindersHtml(b) + totalCard(b, c) + goalsHtml(b) + endingCard(b) + childCard(b);
+  h += draftBanner(b) + adviceHtml(b) + remindersHtml(b) + totalCard(b, c) + goalsHtml(b) + endingCard(b) + childCard(b);
   h += `<div class="grid2">
     <div class="card"><h2>Saldo ultimo måned <span class="hint">budgetkontoen efter alle betalinger</span></h2>${saldoSummary(b, c)}<div class="chart" id="chSaldo"></div></div>
     <div class="card"><h2>Indtægter og udgifter pr. måned</h2><div class="legend"><span><i style="background:var(--s1)"></i>Indtægter</span><span><i style="background:var(--s2)"></i>Udgifter</span></div><div class="chart" id="chIE"></div></div>
@@ -725,10 +728,11 @@ function vBudget(){
     <button class="btn small" data-act="known" title="Notér kendte prisstigninger til næste år">↗ Priser ${+S.year + 1}${(n => n ? ' (' + n + ')' : '')(allLines(b).filter(({l}) => knownChange(l, +S.year + 1)).length)}</button>
     <button class="btn small" data-act="addCat">+ Kategori</button>
     <button class="btn small" data-act="cleanup" title="Find poster uden beløb">🧹 Ryd op</button>
+    <button class="btn small" data-act="code" title="Indsæt kode fra Claudes besked">📋 Indsæt kode</button>
     <button class="btn small" data-act="import">Importér Excel</button>
     <button class="btn small" data-act="backup">Sikkerhedskopi</button>
     ${S.dl ? '<button class="btn small primary" data-act="export">⬇ Download Excel</button>' : ''}
-  </div></div>` + adviceHtml(b) + syncBanner(b) + filterBar(b) + `<div id="flist">${budgetList(b)}</div>`;
+  </div></div>` + draftBanner(b) + adviceHtml(b) + syncBanner(b) + filterBar(b) + `<div id="flist">${budgetList(b)}</div>`;
   return h;
 }
 function budgetList(b){
@@ -745,7 +749,7 @@ function budgetList(b){
     if (!mobile){
       h += `<div class="tscroll" style="margin:0;padding:0"><table class="g"><thead><tr><th>Post</th>${MON.map((m, i) => `<th class="${isRec(b, i) ? 'rch' : ''}" title="${isRec(b, i) ? 'Afstemt' : ''}">${m}${isRec(b, i) ? ' ✓' : ''}</th>`).join('')}<th>I alt</th><th></th></tr></thead><tbody>`;
       for (const l of lines){
-        h += `<tr><td class="nm"><button class="lname" data-act="editLine" data-c="${cat.id}" data-l="${l.id}"><span class="t">${esc(l.name)}</span>${l.oneOff ? '<span class="flag">engang</span>' : ''}${knownChange(l, +S.year + 1) ? '<span class="flag" title="' + esc(knownLabel(l.next)) + '">↗ ' + (+S.year + 1) + '</span>' : ''}${l.ends ? '<span class="flag" title="Kommer ikke med i ' + (+S.year + 1) + '">udgår</span>' : ''}${l.note ? '<span class="flag" title="' + esc(l.note) + '">note</span>' : ''}${((S.docs.lines || {})[l.id] || []).length ? '<span class="flag" title="Dokumenter">📎</span>' : ''}</button></td>
+        h += `<tr><td class="nm"><button class="lname" data-act="editLine" data-c="${cat.id}" data-l="${l.id}"><span class="t">${esc(l.name)}</span>${l.oneOff ? '<span class="flag">engang</span>' : ''}${knownChange(l, +S.year + 1) ? '<span class="flag" title="' + esc(knownLabel(l.next)) + '">↗ ' + (+S.year + 1) + '</span>' : ''}${l.ends ? '<span class="flag" title="Kommer ikke med i ' + (+S.year + 1) + '">udgår</span>' : ''}${l.account === 'løn' ? '<span class="flag" title="Trækkes fra lønkonto – udlignes med overførsel">lønkonto</span>' : ''}${l.note ? '<span class="flag" title="' + esc(l.note) + '">note</span>' : ''}${((S.docs.lines || {})[l.id] || []).length ? '<span class="flag" title="Dokumenter">📎</span>' : ''}</button></td>
           ${l.amounts.map((v, m) => { const pl = l.plan && l.plan[m] != null && +l.plan[m] !== +v ? l.plan[m] : null; return `<td class="${isRec(b, m) ? 'rcc' : ''}"><input class="cell ${pl != null ? 'dev' : ''}" inputmode="decimal" data-c="${cat.id}" data-l="${l.id}" data-m="${m}" value="${kr0(v)}" aria-label="${esc(l.name)} ${MONL[m]}" ${pl != null ? `title="Budget: ${fmt(pl)} · Faktisk: ${fmt(v)}"` : ''}></td>`; }).join('')}
           <td class="rt num" data-tot="l:${l.id}">${fmt(sum(l.amounts))}</td><td><button class="btn ghost small" data-act="bulk" data-c="${cat.id}" data-l="${l.id}" title="Ret flere måneder på én gang" aria-label="Ret flere måneder for ${esc(l.name)}">⇉</button></td></tr>`;
       }
@@ -824,6 +828,72 @@ document.addEventListener('keydown', e => {
 /* Konverterer gamle prisændringer (noter som "Pr. 1/1 2027: 477,-" og nye priser i forsikringsdetaljer) til kendte ændringer */
 const NOTE_PRICE_RE = /(?:pr\.?|fra|per)\s*(?:(\d{1,2})\s*[\/.]\s*(\d{1,2})\s*[\/.]?\s*)?(\d{4})\s*:?\s*(?:kr\.?\s*)?(\d[\d.]*(?:,\d+)?)(?:\s*,-|\s*kr\.?)?/i;
 let migSig = '';
+/* ---------- AUTOMATISK UDKAST TIL NÆSTE ÅR ---------- */
+function autoDraft(){
+  const now = new Date(), Y = now.getFullYear(), ny = String(Y + 1); if (now.getMonth() < 9) return;
+  if (!S.years[String(Y)] || S.years[ny] || (S.hh.draftSkip || []).includes(+ny)) return;
+  if (window.STANDALONE && window.FBSyncReady && !window.FBSyncReady()) return;
+  const {nb} = buildNextYear(S.years[String(Y)], {latest: true, resetOneOff: true, index: 0, indexVar: false, carry: true, raise: true, avgVar: true});
+  nb.draft = {created: todayStr()}; S.years[ny] = nb; saveYear(ny);
+  toast(`Udkast til budget ${ny} er lavet – gennemse det under ${ny}`); softRender();
+}
+function draftBanner(b){
+  if (!b || !b.draft) return '';
+  return `<div class="banner warn" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span style="flex:1;min-width:240px">📝 <b>Udkast</b> – lavet automatisk ${dkDate(b.draft.created)} ud fra ${+b.year - 1}. Det opdateres stadig, når du retter i ${+b.year - 1}. Gennemse posterne, og godkend når det passer.</span>
+    <button class="btn small primary" data-act="draftOk">Godkend</button><button class="btn small" data-act="draftRedo">Lav om</button><button class="btn small ghost danger" data-act="draftDel">Slet udkast</button></div>`;
+}
+/* ---------- PRISÆNDRINGER FUNDET I MAILS / KODER ---------- */
+function applyPrice(f){
+  const Y = +f.year, from = Math.min(12, Math.max(1, +f.from || 1));
+  const tryYear = (yy, fn) => { const bb = S.years[String(yy)]; if (!bb) return null; const hit = findLineIn(bb, f.lineId) || (f.lineName ? allLines(bb).find(x => norm(x.l.name) === norm(f.lineName)) : null); return hit ? fn(bb, hit) : null; };
+  const nextRes = tryYear(Y - 1, (bb, hit) => { hit.l.next = f.kind === 'pct' ? {year: Y, kind: 'pct', val: +f.val, from} : {year: Y, kind: 'amt', val: +f.val, from}; saveYear(String(Y - 1)); return `${hit.l.name}: ${knownLabel(hit.l.next).replace('Kendt ændring: ', '')} i ${Y}`; });
+  if (nextRes) return nextRes;
+  return tryYear(Y, (bb, hit) => { const sc = detectSchedule(hit.l.amounts); let n = 0;
+    for (let m = from - 1; m < 12; m++){ if (isRec(bb, m)) continue; if (sc.f === 1 || +hit.l.amounts[m]){ const old = +hit.l.amounts[m] || 0, nv = f.kind === 'pct' ? Math.round((old || sc.amt) * (1 + f.val / 100)) : +f.val; if (old !== nv){ hit.l.amounts[m] = nv; n++; } } }
+    saveYear(String(Y)); return n ? `${hit.l.name}: ${f.kind === 'pct' ? '+' + f.val + ' %' : fmt(f.val) + ' kr'} fra ${MONL[from - 1]} ${Y} (${n} mdr.)` : null; });
+}
+const openFinds = () => Object.entries((S.finds || {}).items || {}).filter(([, f]) => !f.status || f.status === 'ny');
+function findsModal(){
+  const list = openFinds(); if (!list.length){ toast('Ingen nye prisændringer'); return; }
+  openModal(`<h2>Prisændringer fundet i jeres mails</h2><p class="muted" style="margin:0 0 10px">Claude har fundet disse i Gmail. Godkendte ændringer lægges ind i budgettet${S.years[String(new Date().getFullYear() + 1)] ? '' : ' og bruges, når næste års budget laves'}.</p>
+    ${list.map(([id, f]) => `<div class="idea" style="padding:10px 0;display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap"><div style="flex:1;min-width:240px"><b>${esc(f.lineName || f.lineId)}</b>: ${f.kind === 'pct' ? '+' + String(f.val).replace('.', ',') + ' %' : fmt(f.val) + ' kr pr. betaling'} fra ${MONL[(+f.from || 1) - 1]} ${f.year}${f.old ? ` <span class="muted">(før ${fmt(f.old)} kr)</span>` : ''}
+      <div class="muted" style="font-size:12.5px">${esc(f.source || '')}${f.date ? ' · ' + esc(f.date) : ''}${f.note ? ' · ' + esc(f.note) : ''}</div></div>
+      <span style="display:flex;gap:6px"><button class="btn small primary" data-act="fdOk" data-id="${esc(id)}">Godkend</button><button class="btn small ghost" data-act="fdNo" data-id="${esc(id)}">Ignorér</button></span></div>`).join('')}
+    <div class="acts"><span class="sp"></span><button class="btn" data-act="close">Luk</button><button class="btn primary" data-act="fdAll">Godkend alle</button></div>`, () => {
+    const done = (id, st, res) => { S.finds.items[id] = Object.assign({}, S.finds.items[id], {status: st, handled: todayStr()}); saveFinds(); if (res) toast(res); };
+    MODAL_ACTS = {
+      fdOk(t){ const f = S.finds.items[t.dataset.id], r = applyPrice(f); done(t.dataset.id, r ? 'godkendt' : 'ny', r || 'Posten blev ikke fundet i budgettet'); closeModal(); render(); if (openFinds().length) findsModal(); },
+      fdNo(t){ done(t.dataset.id, 'ignoreret'); closeModal(); render(); if (openFinds().length) findsModal(); },
+      fdAll(){ const res = []; openFinds().forEach(([id, f]) => { const r = applyPrice(f); if (r){ res.push(r); done(id, 'godkendt'); } }); closeModal(); render(); toast(res.length ? res.length + ' ændring' + (res.length > 1 ? 'er' : '') + ' lagt ind' : 'Ingen poster fundet'); }
+    };
+  });
+}
+function parseCodes(text){
+  const out = [], num = v => v == null || v === '-' || v === '' ? null : parseNum(v);
+  for (const raw of String(text).split(/\n+/)){ const t = raw.trim(); if (!t) continue; const g = re => { const m = t.match(re); return m ? m[1] : null; };
+    if (/^CLEVER\b/i.test(t)){ const k = g(/(\d{4}-\d{2})/); if (!k) continue; const d = {sub: num(g(/sub=([-\d.,]*)/)), tillaeg: num(g(/til=([-\d.,]*)/)) || 0, total: num(g(/tot=([-\d.,]*)/)), home: num(g(/home=([-\d.,]*)/)), homeKr: num(g(/\bkr=([-\d.,]*)/))};
+      const el = num(g(/\bel=([-\d.,]*)/)); if (el) Object.assign(d, {elKwh: el, elPrice: num(g(/pris=([-\d.,]*)/)), elBill: num(g(/regning=([-\d.,]*)/)), elSub: num(g(/elabo=([-\d.,]*)/))});
+      if (d.home != null) out.push({type: 'clever', k, d, label: `Opladning ${ymNice(k)}: ${fmt(d.home)} kWh hjemme${d.elKwh ? ', elregning ' + kr(d.elBill || 0) : ''}`}); }
+    else if (/^POST\b/i.test(t)){ const id = g(/id=(\S+)/), ko = g(/konto=(\S+)/), fk = g(/forklaret=(\d)/), nm = g(/navn="([^"]+)"/); if (id) out.push({type: 'post', id, nm, ko, fk, label: `${nm || id}: ${ko ? 'betales fra ' + (ACCOUNTS[ko === 'budget' ? '' : ko] || ko) : ''}${fk === '1' ? (ko ? ', ' : '') + 'prisændring forklaret' : ''}`}); }
+    else if (/^PRIS\b/i.test(t)){ const id = g(/id=(\S+)/), y = g(/(?:år|aar)=(\d{4})/), amt = g(/beløb=([-\d.,]+)/), pct = g(/pct=([-\d.,]+)/), fr = g(/fra=(\d{1,2})/), nm = g(/navn="([^"]+)"/);
+      if (!id || !y || (amt == null && pct == null)) continue; out.push({type: 'pris', f: {lineId: id, lineName: nm || '', year: +y, kind: pct != null ? 'pct' : 'amt', val: num(pct != null ? pct : amt), from: +fr || 1}, label: `${nm || id}: ${pct != null ? '+' + pct + ' %' : amt + ' kr'} fra ${MONL[(+fr || 1) - 1]} ${y}`}); } }
+  return out;
+}
+function codeModal(){
+  openModal(`<h2>Indsæt kode fra Claude</h2><p class="muted" style="margin:0 0 10px">Kopiér koden fra Claudes besked (linjer der starter med CLEVER eller PRIS) og sæt den ind her.</p>
+    <textarea class="inp" id="cdTxt" rows="5" placeholder="CLEVER 2026-11 sub=849 …&#10;PRIS id=internet-fastspeed år=2027 beløb=799 fra=1 navn=&quot;Internet (Fastspeed)&quot;"></textarea>
+    <div id="cdPrev" class="muted" style="margin-top:8px;font-size:13.5px"></div>
+    <div class="acts"><span class="sp"></span><button class="btn" data-act="close">Annuller</button><button class="btn primary" data-act="cdGo">Læg ind</button></div>`, sheet => {
+    const prev = () => { const L = parseCodes($('#cdTxt').value); $('#cdPrev').innerHTML = L.length ? L.map(x => '✓ ' + esc(x.label)).join('<br>') : 'Ingen gyldige linjer endnu.'; };
+    $('#cdTxt').addEventListener('input', prev);
+    MODAL_ACTS = { cdGo(){ const L = parseCodes($('#cdTxt').value); if (!L.length){ toast('Ingen gyldige linjer'); return; } const res = [];
+      L.forEach(x => { if (x.type === 'post'){ let n = 0; Object.keys(S.years).filter(y => +y >= +S.year - 0).forEach(y => { const hit = findLineIn(S.years[y], x.id) || (x.nm ? allLines(S.years[y]).find(z => norm(z.l.name) === norm(x.nm)) : null); if (!hit) return; if (x.ko) { x.ko === 'budget' ? delete hit.l.account : hit.l.account = x.ko; } if (x.fk === '1') hit.l.riseOk = info(hit.l).last; saveYear(y); n++; }); res.push(n ? x.label : (x.nm || x.id) + ': posten blev ikke fundet'); return; }
+        if (x.type === 'clever'){ S.chg = Object.assign({months: {}}, S.chg); S.chg.months = Object.assign({}, S.chg.months, {[x.k]: x.d}); saveChg(); res.push(x.label); }
+        else { const r = applyPrice(x.f); res.push(r || (x.f.lineName || x.f.lineId) + ': posten blev ikke fundet');
+          const fid = Object.entries((S.finds || {}).items || {}).find(([, f]) => f.lineId === x.f.lineId && +f.year === +x.f.year && (!f.status || f.status === 'ny')); if (fid && r){ S.finds.items[fid[0]].status = 'godkendt'; saveFinds(); } } });
+      closeModal(); render(); toast(res.length + ' linje' + (res.length > 1 ? 'r' : '') + ' lagt ind'); } };
+  });
+}
 function applyPendingNext(){
   const a = S.chg && S.chg.applyNext; if (!a || !S.years[a.year]) return;
   const hit = findLineIn(S.years[a.year], a.id) || allLines(S.years[a.year], l => /clever/i.test(l.name)).map(x => ({l: x.l}))[0];
@@ -831,7 +901,7 @@ function applyPendingNext(){
   S.chg = Object.assign({}, S.chg); delete S.chg.applyNext; saveChg(); softRender();
 }
 function migrateKnown(){
-  applyPendingNext();
+  applyPendingNext(); try { autoDraft(); } catch (e){}
   const ys = Object.keys(S.years); if (!ys.length) return;
   const sig = ys.map(y => y + ':' + JSON.stringify(S.years[y]).length).join('|') + '|' + JSON.stringify(S.ins || {}).length; if (sig === migSig) return; migSig = sig;
   const changedYears = new Set(); let insCh = false, n = 0;
@@ -973,7 +1043,7 @@ function yearReport(y){
   const planSum = l => sum(l.amounts.map((v, m) => l.plan && l.plan[m] != null ? +l.plan[m] : +v || 0));
   const devs = allLines(b).map(({l, c: cat}) => { const d = sum(l.amounts) - planSum(l); return {l, cat, d: cat.type === 'income' ? -d : d}; }).filter(x => Math.abs(x.d) >= 50).sort((a, b2) => b2.d - a.d);
   const saved = allLines(b, (l, cat) => cat.type === 'savings').reduce((a, {l}) => a + sum(l.amounts), 0);
-  const yoy = prev ? allLines(b, (l, cat) => cat.type !== 'income').map(({l, c: cat}) => { const pl = findLineIn(prev, l.id); return {l, cat, a: pl ? sum(pl.l.amounts) : 0, n: sum(l.amounts)}; }).filter(x => x.a && x.n - x.a >= 200).sort((a, b2) => (b2.n - b2.a) - (a.n - a.a)).slice(0, 5) : [];
+  const yoy = prev ? allLines(b, (l, cat) => cat.type !== 'income').map(({l, c: cat}) => { const pl = findLineIn(prev, l.id); return {l, cat, a: pl ? sum(pl.l.amounts) : 0, n: sum(l.amounts)}; }).filter(x => x.a && x.n - x.a >= 200 && !riseOk(x.l)).sort((a, b2) => (b2.n - b2.a) - (a.n - a.a)).slice(0, 5) : [];
   const goals = allLines(b, (l, cat) => cat.type === 'savings').map(({l}) => ({l, g: (S.goals.items || {})[l.id]})).filter(x => x.g && x.g.target);
   const dev = recDevResult(b), ended = allLines(b, l => l.ends || (l.endDate && ymParse(l.endDate).y === +y)).map(x => x.l.name);
   const li = (x, neg) => `<tr><td>${esc(x.l.name)} <span class="muted" style="font-size:12px">· ${esc(x.cat.name)}</span></td><td class="num ${neg ? 'st-good' : 'st-crit'}">${x.d > 0 ? '+' : ''}${fmt(x.d)}</td></tr>`;
@@ -1000,6 +1070,8 @@ function detectSchedule(amounts){
   return {f, s: idx[0], amt, n: idx.length};
 }
 const schedLabel = sc => sc.n ? (FREQS.find(x => x[0] === sc.f) || [0, ''])[1].toLowerCase() + (sc.f > 1 ? ' fra ' + MONL[sc.s] : '') : 'ingen betalinger';
+const riseOk = l => l.riseOk != null && +l.riseOk === +info(l).last;
+const ACCOUNTS = {'': 'Budgetkonto', 'løn': 'Lønkonto'};
 const isVarLine = l => { const i = info(l); return i.distinct.length > 3 && i.nz.length >= 6; };
 function knownBox(l, preset){
   const ny = +S.year + 1, kn = preset || (l.next && +l.next.year === ny ? l.next : null), np = nextPrice(l, ny);
@@ -1094,6 +1166,8 @@ function lineModal(cid, lid, opts = {}){
     ${!isNew && l.ends ? `<div class="banner warn" style="margin-top:12px">Udgår – kommer ikke med i budget ${+S.year + 1}. <button class="btn small" data-act="lmUnEnd">Fortryd</button></div>` : ''}
     <p class="muted" style="margin:8px 0 0">I alt: <b class="num" id="lmTot">${kr(sum(l.amounts))}</b></p>
     <label class="chk" style="margin-top:10px"><input type="checkbox" id="lmOne" ${l.oneOff ? 'checked' : ''}><span>Engangspost – nulstilles når næste års budget oprettes</span></label>
+    <div class="row2" style="margin-top:10px"><label class="field">Betales fra<select class="inp" id="lmAcc">${Object.entries(ACCOUNTS).map(([k, v]) => `<option value="${k}" ${(l.account || '') === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+    <label class="chk" style="align-self:end"><input type="checkbox" id="lmRiseOk" ${!isNew && riseOk(l) ? 'checked' : ''}><span>Prisændringen er forklaret – vis den ikke som stigning</span></label></div>
     <label class="field" style="margin-top:10px">Ved nyt år<select class="inp" id="lmAvg"><option value="">Automatisk${isVarLine(l) && cat.type === 'expense' ? ' (gennemsnit – svingende forbrug)' : ''}</option><option value="1" ${l.avg === true ? 'selected' : ''}>Gennemsnit: årets total ÷ 12 hver måned</option><option value="0" ${l.avg === false ? 'selected' : ''}>Samme mønster som i år</option></select></label>
     <label class="chk"><input type="checkbox" id="lmKeep" ${l.keep ? 'checked' : ''}><span>Behold beløb præcis som i år ved nyt år (ingen automatisk justering)</span></label>
     ${resetsYearly(cat) ? `<label class="chk"><input type="checkbox" id="lmFixed" ${isFixedPost(l) ? 'checked' : ''}><span>Fast post i ${esc(cat.name)} – bevares med 0 kr ved nyt år (ellers fjernes den)</span></label>` : ''}
@@ -1124,6 +1198,7 @@ function lineModal(cid, lid, opts = {}){
           const na = cur(); if (!isNew) na.forEach((v, m) => { if (isRec(B(), m) && v !== (+l.amounts[m] || 0)) keepPlan(target, m); });
           Object.assign(target, {name, amounts: na});
           const one = $('#lmOne').checked, keep = $('#lmKeep').checked, note = $('#lmNote').value.trim();
+          { const ac = $('#lmAcc').value; ac ? target.account = ac : delete target.account; if ($('#lmRiseOk').checked) target.riseOk = info(target).last; else delete target.riseOk; }
           { const av = $('#lmAvg').value; av === '1' ? target.avg = true : av === '0' ? target.avg = false : delete target.avg; }
           one ? target.oneOff = true : delete target.oneOff; keep ? target.keep = true : delete target.keep; note ? target.note = note : delete target.note;
           if ($('#lmFixed')) target.keepInReset = $('#lmFixed').checked;
@@ -1632,6 +1707,8 @@ function reminderItems(b){
   }
   const rs = reviewState(); if (rs && rs.isDue) items.push(['🛡', `Tid til forsikringsgennemgang${rs.r.lastSwitch ? ' – ' + REVIEW_YEARS + ' år siden skiftet' : ''}${rs.canSnooze ? '' : ' (kan ikke udsættes mere)'}`, 'act', 'revOpen']);
   { const nowd = new Date(), py = String(nowd.getFullYear() - 1); if (nowd.getMonth() <= 1 && S.years[py] && !(S.years[py].reportSeen)) items.push(['📋', `Årsopgørelsen for ${py} er klar`, 'act', 'yearReport']); }
+  { const nd = S.years[String(new Date().getFullYear() + 1)]; if (nd && nd.draft && String(+b.year) !== nd.year + '' ) items.push(['📝', `Udkast til budget ${nd.year} står klar – gennemse og godkend`, 'year2', String(nd.year)]); }
+  { const nf = openFinds().length; if (nf) items.push(['🧾', `${nf} prisændring${nf > 1 ? 'er' : ''} fundet i jeres mails – gennemse`, 'act', 'finds']); }
   { const mk = chgMissing(); if (mk) items.push(['🔌', `Notér opladning for ${ymNice(mk)} i Ladeaftale-tjek`, 'act', 'chgAdd']); const sm = chgSummary(); if (sm && sm.diff > chgP().threshold) items.push(['🔌', `${chgP().provider} koster ca. ${kr(sm.diff)} mere om året end ${sm.bestName.toLowerCase()} – se Ladeaftale-tjek`, 'href', '#besparelser']); }
   { const cu = cleanupCandidates(b).filter(x => x.def).length; if (cu && !b.cleanSeen) items.push(['🧹', `${cu} post${cu > 1 ? 'er' : ''} uden beløb kan ryddes op`, 'act', 'cleanup']); }
   for (const x of childEvents(b)) if (x.y === +b.year + 1 && x.hit && !knownChange(x.hit.l, x.y) && x.ev !== 'stop' && (new Date().getFullYear() === +b.year)) items.push(['👧', `${x.k.name} fylder ${x.age} i ${x.y} – notér den nye ydelse`, 'act', 'childKnownR:' + x.hit.c.id + ':' + x.hit.l.id + ':' + x.ev + ':' + (x.bm != null ? x.bm + 2 : 1)]);
@@ -1643,7 +1720,7 @@ function reminderItems(b){
 }
 function remindersHtml(b){
   const items = reminderItems(b); if (!items.length) return '';
-  return `<div class="card"><h2>Huskeliste</h2>${items.map(([ic, t, k, v]) => `<div class="idea" style="padding:8px 0;display:flex;gap:10px;align-items:center"><span aria-hidden="true">${ic}</span><span style="flex:1">${esc(t)}</span>${k === 'href' ? `<a class="btn small" href="${v}">Åbn</a>` : k === 'year' ? `<button class="btn small" data-act="gotoYearReview" data-y="${v}">Gennemse</button>` : String(v).startsWith('childKnownR:') ? (p => `<button class="btn small" data-act="childKnown" data-c="${p[1]}" data-l="${p[2]}" data-ev="${p[3]}" data-m="${p[4]}">Notér</button>`)(String(v).split(':')) : `<button class="btn small" data-act="${v}">Åbn</button>`}</div>`).join('')}</div>`;
+  return `<div class="card"><h2>Huskeliste</h2>${items.map(([ic, t, k, v]) => `<div class="idea" style="padding:8px 0;display:flex;gap:10px;align-items:center"><span aria-hidden="true">${ic}</span><span style="flex:1">${esc(t)}</span>${k === 'href' ? `<a class="btn small" href="${v}">Åbn</a>` : k === 'year' ? `<button class="btn small" data-act="gotoYearReview" data-y="${v}">Gennemse</button>` : k === 'year2' ? `<button class="btn small" data-act="gotoYear" data-y="${v}">Gennemse</button>` : String(v).startsWith('childKnownR:') ? (p => `<button class="btn small" data-act="childKnown" data-c="${p[1]}" data-l="${p[2]}" data-ev="${p[3]}" data-m="${p[4]}">Notér</button>`)(String(v).split(':')) : `<button class="btn small" data-act="${v}">Åbn</button>`}</div>`).join('')}</div>`;
 }
 
 /* ---------- TOTALOVERBLIK ---------- */
@@ -1784,7 +1861,7 @@ function buildNextYear(from, o){
     else if (s0.freedTo === 'lower'){ const tl = transferLines(nb); if (tl.length){ const per = Math.round(amt / tl.length); tl.forEach(l => { const hit = findLineIn(nb, l.id); add(hit, -per); chg(hit.c, hit.l, `−${fmt(per)} kr/md (${s0.name} er betalt ud)`); }); } }
   }
   nb.categories.forEach(c => { c.lines = c.lines.filter(l => { if (l.ends && +l.ends < +nb.year){ const k = changes.findIndex(x => x.cat === c.name && x.name === l.name); if (k >= 0) changes.splice(k, 1); const src = findLineIn(from, l.id); changes.push({cat: c.name, name: l.name, a: src ? sum(src.l.amounts) : 0, n: 0, notes: ['Udgået – fjernes'], review: []}); return false; } return true; }); });
-  nb.categories.forEach(c => c.lines.forEach(l => { if (l.next && +l.next.year <= +nb.year) delete l.next; delete l.endBackup; })); delete nb.cleanSeen;
+  nb.categories.forEach(c => c.lines.forEach(l => { if (l.next && +l.next.year <= +nb.year) delete l.next; delete l.endBackup; })); delete nb.cleanSeen; delete nb.draft; delete nb.reportSeen;
   nb.linked = true; nb.startAuto = !!o.carry; nb.removed = [];
   nb.rollOpts = {avgVar: !!o.avgVar, latest: !!o.latest, resetOneOff: !!o.resetOneOff, index: o.index || 0, indexVar: !!o.indexVar, raise: !!o.raise, carry: !!o.carry};
   nb.categories.forEach(c => c.lines.forEach(l => { l.auto = l.amounts.slice(); }));
@@ -1882,7 +1959,7 @@ function analyze(b){
   const L = allLines(b);
   // 1 price rises within the year
   for (const {l, c: cat} of L){
-    if (['income', 'savings', 'loan'].includes(cat.type)) continue;
+    if (['income', 'savings', 'loan'].includes(cat.type) || riseOk(l)) continue;
     const i = info(l), np = cat.type === 'insurance' ? nextPrice(l) : null;
     if (np && i.base){ i.last = np.monthly; i.distinct = [i.base, np.monthly]; }
     if (i.distinct.length < 2 || i.distinct.length > 3 || i.nz.length < 2) continue;
@@ -1935,7 +2012,7 @@ function analyze(b){
       if (cat.type === 'income') continue;
       let pl = null; prev.categories.forEach(pc => pc.lines.forEach(x => { if (x.id === l.id) pl = x; }));
       if (!pl) continue; const a = sum(pl.amounts), n = sum(l.amounts);
-      if (a > 0 && n > a * 1.05 && n - a >= 300 && !out.some(o => o.id === 'rise:' + l.id)) out.push({id: 'yoy:' + l.id, icon: '📊', title: `${l.name}: ${pct((n / a - 1) * 100)} i forhold til ${+S.year - 1}`, text: `Fra ${kr(a)} til ${kr(n)} om året. Er stigningen nødvendig, eller kan aftalen genforhandles?`, pot: n - a, act: cat.type === 'insurance' ? 'forsikringer' : null});
+      if (a > 0 && n > a * 1.05 && n - a >= 300 && !riseOk(l) && !out.some(o => o.id === 'rise:' + l.id)) out.push({id: 'yoy:' + l.id, icon: '📊', title: `${l.name}: ${pct((n / a - 1) * 100)} i forhold til ${+S.year - 1}`, text: `Fra ${kr(a)} til ${kr(n)} om året. Er stigningen nødvendig, eller kan aftalen genforhandles?`, pot: n - a, act: cat.type === 'insurance' ? 'forsikringer' : null});
     }
   }
   // order: with potential first
@@ -2623,7 +2700,11 @@ const ACTS = {
   },
   delSv(t){ delete S.sv.items[t.dataset.id]; saveSv(); render(); },
   applyRaise: raiseModal,
-  known(){ knownModal(); },
+  known(){ knownModal(); }, code(){ codeModal(); }, finds(){ findsModal(); },
+  gotoYear(t){ S.year = t.dataset.y; store.set('budget.year', S.year); S.tab = 'budget'; history.replaceState(null, '', '#budget'); render(); },
+  draftOk(){ const b = B(); delete b.draft; saveYear(); render(); toast('Budget ' + b.year + ' er godkendt'); },
+  draftRedo(){ const y = B().year; S.year = String(+y - 1); store.set('budget.year', S.year); render(); newYearModal(); },
+  draftDel(){ const y = String(B().year); confirmModal(`Slet udkastet til ${y}? Det laves ikke automatisk igen – du kan selv oprette det med "+ Nyt år".`, 'Slet', () => { delete S.years[y]; delYearDoc(y); S.hh.draftSkip = (S.hh.draftSkip || []).concat(+y); saveHH(); pickYear(); render(); }); },
   chgAdd(t){ chgModal(t && t.dataset ? t.dataset.k : null); }, chgParams(){ chgParamsModal(); },
   chgKnown(t){ const hit = findLineIn(B(), t.dataset.l); if (!hit) return; const v = +t.dataset.v; hit.l.next = {year: +S.year + 1, kind: 'amt', val: v, from: 1}; saveYear(); render(); toast(`${hit.l.name}: ${fmt(v)} kr/md i ${+S.year + 1} er noteret`); },
   yearReport(t){ const y = (t && t.dataset && t.dataset.y) || reportYear(); const yb = S.years[y]; if (yb && String(y) !== String(S.year) && !yb.reportSeen){ yb.reportSeen = true; saveYear(y); } yearReport(y); },

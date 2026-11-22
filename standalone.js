@@ -155,7 +155,7 @@
           const sha = await this.put(merged, remote.sha);
           if (sha){ st.sha = sha; st.pending = false; persist(); break; }
         }
-        this.status = this.empty ? 'empty' : 'ok'; this.msg = this.empty ? `Filen "${this.cfg.path}" findes ikke i ${this.cfg.repo} endnu.` : ''; this.last = new Date();
+        this.status = this.empty ? 'empty' : 'ok'; this.everOk = true; this.msg = this.empty ? `Filen "${this.cfg.path}" findes ikke i ${this.cfg.repo} endnu.` : ''; this.last = new Date();
       } catch (e){ this.status = 'error'; this.msg = e.message || String(e); }
       this.busy = false; ui();
       if (st.pending && this.status === 'ok') this.schedule();
@@ -231,7 +231,7 @@
   document.addEventListener('click', e => { if (e.target.closest('[data-act="syncSetup"]')){ e.preventDefault(); openSetup(); } });
 
   /* ---------- ny version ---------- */
-  const APP_VERSION = 'familiebudget-v20';
+  const APP_VERSION = 'familiebudget-v22';
   let verShown = false, verChecked = 0;
   async function checkVersion(){
     if (verShown || !navigator.onLine || Date.now() - verChecked < 5 * 60e3) return; verChecked = Date.now();
@@ -256,6 +256,7 @@
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkVersion(); });
   setInterval(checkVersion, 30 * 60e3);
   Sync.load(); if (Sync.cfg) askPersist();
+  window.FBSyncReady = () => !Sync.cfg || !!Sync.everOk;
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', addButton); else addButton();
   window.addEventListener('online', () => Sync.run());
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') Sync.run(); else if (st.pending && Sync.cfg) Sync.run(); });

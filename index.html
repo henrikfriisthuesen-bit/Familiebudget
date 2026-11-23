@@ -49,6 +49,17 @@ a{color:var(--accent-ink)}
 .brand .dot{width:26px;height:26px;border-radius:8px;background:var(--accent);display:grid;place-items:center;color:#fff;font-size:14px;flex:none}
 .brand small{display:block;font-weight:400;color:var(--ink-3);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .top .sp{flex:1}
+/* Smal skærm: én kompakt linje uden at titlen løber ind under knapperne */
+@media (max-width:640px){
+  .top{gap:6px;padding-left:calc(env(safe-area-inset-left) + 10px);padding-right:calc(env(safe-area-inset-right) + 10px)}
+  .brand{font-size:15px;gap:6px;flex:1 1 auto}
+  .brand>div{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .top .sp{display:none}
+  .top .btn.small{padding:6px 8px}
+  .top select.year{max-width:92px;padding:6px 24px 6px 8px;text-overflow:ellipsis;background-position:calc(100% - 13px) 52%,calc(100% - 8px) 52%}
+  .nyt-t{display:none}
+}
+@media (max-width:380px){.brand .dot{display:none}}
 .sync{font-size:12px;color:var(--ink-3);white-space:nowrap}
 .sync.err{color:var(--crit-ink)}
 select.year{appearance:none;-webkit-appearance:none;border:1px solid var(--line);background:var(--surface-2);border-radius:10px;padding:7px 28px 7px 12px;font-weight:600;
@@ -320,7 +331,7 @@ details.fold[open]>summary::before{transform:rotate(90deg)}
   <div class="sp"></div>
   <span class="sync" id="sync"></span>
   <select class="year" id="yearSel" aria-label="Vælg år"></select>
-  <button class="btn primary small" data-act="newYear" title="Opret nyt år ud fra det valgte">+ Nyt år</button>
+  <button class="btn primary small" data-act="newYear" title="Opret nyt år ud fra det valgte" aria-label="Nyt år">+<span class="nyt-t"> Nyt år</span></button>
 </header>
 <div class="wrap">
   <nav class="tabs" id="tabs"></nav>

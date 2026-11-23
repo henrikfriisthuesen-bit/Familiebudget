@@ -231,7 +231,7 @@
   document.addEventListener('click', e => { if (e.target.closest('[data-act="syncSetup"]')){ e.preventDefault(); openSetup(); } });
 
   /* ---------- ny version ---------- */
-  const APP_VERSION = 'familiebudget-v27';
+  const APP_VERSION = 'familiebudget-v28';
   let verShown = false, verChecked = 0;
   async function checkVersion(){
     if (verShown || !navigator.onLine || Date.now() - verChecked < 5 * 60e3) return; verChecked = Date.now();

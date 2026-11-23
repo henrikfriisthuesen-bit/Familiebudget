@@ -93,6 +93,9 @@ h3{font-size:15px;margin:0}
 .grid2{display:grid;grid-template-columns:1fr;gap:16px}
 @media (min-width:1100px){.grid2{grid-template-columns:1fr 1fr}.grid2>.card{margin-bottom:0}}
 .tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:16px}
+/* Faste 3/4-kolonners felter: 2 kolonner på smalle skærme, så beløbene ikke bliver afkortet */
+.tiles.t3>.tile:last-child:nth-child(odd){grid-column:span 2}
+@media (min-width:700px){.tiles.t3{grid-template-columns:repeat(3,minmax(0,1fr))}.tiles.t3>.tile:last-child:nth-child(odd){grid-column:auto}.tiles.t4{grid-template-columns:repeat(4,minmax(0,1fr))}}
 @media (min-width:700px){.tiles{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media (min-width:1200px){.tiles{grid-template-columns:repeat(6,minmax(0,1fr))}}
 .tile{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;box-shadow:var(--shadow);min-width:0}
@@ -1071,7 +1074,7 @@ function yearReport(y){
   const dev = recDevResult(b), ended = allLines(b, l => l.ends || (l.endDate && ymParse(l.endDate).y === +y)).map(x => x.l.name);
   const li = (x, neg) => `<tr><td>${esc(x.l.name)} <span class="muted" style="font-size:12px">· ${esc(x.cat.name)}</span></td><td class="num ${neg ? 'st-good' : 'st-crit'}">${x.d > 0 ? '+' : ''}${fmt(x.d)}</td></tr>`;
   openModal(`<h2>Årsopgørelse ${esc(y)}${done ? '' : ' <span class="badge warn">foreløbig</span>'}</h2><p class="muted" style="margin:0 0 12px">${done ? 'Alle 12 måneder er afstemt.' : rc + ' af 12 måneder er afstemt – resten er budgettal.'}</p>
-    <div class="tiles" style="grid-template-columns:repeat(4,minmax(0,1fr))">${tile('Resultat', `<span class="${c.res < 0 ? 'st-crit' : 'st-good'}">${c.res >= 0 ? '+' : ''}${kr(c.res)}</span>`, c.res >= 0 ? 'overskud' : 'underskud')}${tile('I forhold til budget', `${dev >= 0 ? '+' : ''}${kr(dev)}`, dev >= 0 ? 'bedre end planlagt' : 'dårligere end planlagt')}${tile('Sat til side', kr(saved), 'til opsparing')}${tile('Saldo', kr(c.endBal), 'fra ' + kr(startOf(b)))}</div>
+    <div class="tiles t4">${tile('Resultat', `<span class="${c.res < 0 ? 'st-crit' : 'st-good'}">${c.res >= 0 ? '+' : ''}${kr(c.res)}</span>`, c.res >= 0 ? 'overskud' : 'underskud')}${tile('I forhold til budget', `${dev >= 0 ? '+' : ''}${kr(dev)}`, dev >= 0 ? 'bedre end planlagt' : 'dårligere end planlagt')}${tile('Sat til side', kr(saved), 'til opsparing')}${tile('Saldo', kr(c.endBal), 'fra ' + kr(startOf(b)))}</div>
     ${devs.filter(x => x.d > 0).length ? `<h4 style="margin:14px 0 4px">Over budget</h4><table class="t"><tbody>${devs.filter(x => x.d > 0).slice(0, 5).map(x => li(x)).join('')}</tbody></table>` : ''}
     ${devs.filter(x => x.d < 0).length ? `<h4 style="margin:14px 0 4px">Under budget</h4><table class="t"><tbody>${devs.filter(x => x.d < 0).reverse().slice(0, 5).map(x => li(x, true)).join('')}</tbody></table>` : ''}
     ${yoy.length ? `<h4 style="margin:14px 0 4px">Steget mest siden ${+y - 1}</h4><table class="t"><tbody>${yoy.map(x => `<tr><td>${esc(x.l.name)}</td><td class="num muted">${fmt(x.a)}</td><td class="num">${fmt(x.n)}</td><td class="num st-crit">+${fmt(x.n - x.a)}</td></tr>`).join('')}</tbody></table>` : ''}
@@ -1970,7 +1973,7 @@ function newYearModal(){
   const o = {latest:true, resetOneOff:true, index:0, indexVar:false, carry:true, raise:true, avgVar:true};
   const draw = () => {
     const {nb, changes, adv, raised} = buildNextYear(from, o); const c0 = calc(from), c1 = calc(nb);
-    $('#nyPrev').innerHTML = `<div class="tiles" style="grid-template-columns:repeat(3,minmax(0,1fr))">${tile('Indtægter ' + ny, kr(c1.incT), (c1.incT - c0.incT >= 0 ? '+' : '') + fmt(c1.incT - c0.incT) + ' vs. ' + S.year)}${tile('Udgifter ' + ny, kr(c1.expT), (c1.expT - c0.expT >= 0 ? '+' : '') + fmt(c1.expT - c0.expT) + ' vs. ' + S.year)}${tile('Resultat ' + ny, kr(c1.res), 'startsaldo ' + kr(nb.startBalance))}</div>
+    $('#nyPrev').innerHTML = `<div class="tiles t3">${tile('Indtægter ' + ny, kr(c1.incT), (c1.incT - c0.incT >= 0 ? '+' : '') + fmt(c1.incT - c0.incT) + ' vs. ' + S.year)}${tile('Udgifter ' + ny, kr(c1.expT), (c1.expT - c0.expT >= 0 ? '+' : '') + fmt(c1.expT - c0.expT) + ' vs. ' + S.year)}${tile('Resultat ' + ny, kr(c1.res), 'startsaldo ' + kr(nb.startBalance))}</div>
       ${adv ? `<div class="banner warn">⚠ Uden justering går ${ny} ${kr(adv.def)} i minus. ${adv.tl.length ? `Forslag: <b>+${kr(adv.per)} pr. person pr. måned</b> på overførslerne. <label class="chk" style="margin-top:6px"><input type="checkbox" id="oRaise" ${o.raise ? 'checked' : ''}><span>Læg forhøjelsen ind automatisk</span></label>` : ''}</div>` : ''}
       <h4 style="margin:6px 0">Ændrede poster (${changes.length})</h4>
       <div class="tscroll"><table class="t"><thead><tr><th>Post</th><th>${S.year}</th><th>${ny}</th><th style="text-align:left">Hvorfor</th></tr></thead><tbody>
@@ -2117,7 +2120,7 @@ function chgCard(){
   const miss = chgMissing(), trend = chgTrend(sm), src = (S.chg || {}).source;
   return `<div class="card"><h2 style="display:flex;gap:8px;align-items:center"><span style="flex:1">Ladeaftale-tjek <span class="hint">${esc(P.provider)} · seneste ${sm.n} måneder</span></span><button class="btn small" data-act="chgAdd">+ Tilføj måned</button></h2>
     ${src ? `<p class="muted" style="font-size:12.5px;margin:-4px 0 8px">🔄 ${esc(src)}</p>` : ''}
-    <div class="tiles" style="grid-template-columns:repeat(4,minmax(0,1fr))">${tile(esc(P.provider), kr(sm.clever), 'pr. år')}${tile('Bedste alternativ', kr(sm.best), esc(sm.bestName))}${tile(ok ? 'Status' : 'Kan spares', ok ? '<span class="st-good">✓ Fortsæt</span>' : `<span class="st-crit">${kr(sm.diff)}</span>`, ok ? (sm.diff > 0 ? `alternativ ${kr(sm.diff)} billigere – under grænsen` : `${kr(-sm.diff)} billigere end alternativ`) : 'pr. år – overvej at skifte')}${tile('Forbrug', fmt(sm.kwh) + ' kWh', 'pr. år · ' + Math.round(sm.pub / Math.max(1, sm.kwh) * 100) + ' % ude')}</div>
+    <div class="tiles t4">${tile(esc(P.provider), kr(sm.clever), 'pr. år')}${tile('Bedste alternativ', kr(sm.best), esc(sm.bestName))}${tile(ok ? 'Status' : 'Kan spares', ok ? '<span class="st-good">✓ Fortsæt</span>' : `<span class="st-crit">${kr(sm.diff)}</span>`, ok ? (sm.diff > 0 ? `alternativ ${kr(sm.diff)} billigere – under grænsen` : `${kr(-sm.diff)} billigere end alternativ`) : 'pr. år – overvej at skifte')}${tile('Forbrug', fmt(sm.kwh) + ' kWh', 'pr. år · ' + Math.round(sm.pub / Math.max(1, sm.kwh) * 100) + ' % ude')}</div>
     ${miss ? `<div class="banner warn">Mangler tal for ${ymNice(miss)}. <button class="btn small" data-act="chgAdd" data-k="${miss}">Tilføj</button></div>` : ''}
     ${trend ? `<div class="banner warn">⚠ De seneste ${trend.n} måneder har ${esc(trend.name)} været billigst hver måned – i snit ${kr(trend.perMd)}/md, svarende til ca. <b>${kr(trend.perYr)}/år</b>. Over 12 måneder ser det stadig fint ud, men udviklingen peger mod et skifte. Hold øje med det.</div>` : ''}
     ${!trend && sm.till3 > 250 ? `<div class="banner warn">Energitillægget er i snit ${kr(sm.till3)}/md de seneste 3 måneder. Holder det sig, så tjek igen om et par måneder.</div>` : ''}
@@ -2139,7 +2142,7 @@ function elSection(){
   const last = rows[n - 1], prev = rows.slice(-4, -1), avgP = prev.length ? prev.reduce((a, r) => a + r.price, 0) / prev.length : last.price;
   const max = Math.max(...rows.map(r => r.bill), 1);
   return `<div class="box" style="margin-top:12px"><h4>Elregningen (${esc(P.elProvider)}) <span class="hint">seneste ${n} måneder</span></h4>
-    <div class="tiles" style="grid-template-columns:repeat(3,minmax(0,1fr))">${tile('Elregning efter modregning', kr(bill), 'pr. år · ' + kr(bill / 12) + '/md')}${tile('Husstanden bruger', fmt(house) + ' kWh', 'pr. år (uden bilen)')}${tile('Elpris ' + ymNice(last.k), (last.price / 100).toFixed(2).replace('.', ',') + ' kr/kWh', 'spotpris inkl. moms' + (avgP ? ` · ${last.price >= avgP ? '+' : ''}${Math.round((last.price / avgP - 1) * 100)} % mod de 3 mdr. før` : ''))}</div>
+    <div class="tiles t3">${tile('Elregning efter modregning', kr(bill), 'pr. år · ' + kr(bill / 12) + '/md')}${tile('Husstanden bruger', fmt(house) + ' kWh', 'pr. år (uden bilen)')}${tile('Elpris ' + ymNice(last.k), (last.price / 100).toFixed(2).replace('.', ',') + ' kr/kWh', 'spotpris inkl. moms' + (avgP ? ` · ${last.price >= avgP ? '+' : ''}${Math.round((last.price / avgP - 1) * 100)} % mod de 3 mdr. før` : ''))}</div>
     <div style="display:flex;gap:6px;align-items:flex-end;height:70px;margin:10px 0 4px">${rows.map(r => `<i style="flex:1;background:var(--s1);border-radius:3px 3px 0 0;height:${(r.bill / max * 100).toFixed(1)}%" data-tip="<b>${ymNice(r.k)}</b><br>Regning ${kr(r.bill)}<br>${fmt(r.kwh)} kWh i alt, husstand ${fmt(r.house)}<br>Elpris ${(r.price / 100).toFixed(2).replace('.', ',')} kr/kWh"></i>`).join('')}</div>
     <p style="margin:6px 0 0;font-size:13.5px">${save > 150 ? `Et elselskab med ${P.elAltMarkup} øre i tillæg og ${P.elAltSub} kr/md kunne spare ca. <b>${kr(save)}</b> om året – men så modregnes ladeboksen ikke længere automatisk på elregningen.` : `<span class="st-good">✓ ${esc(P.elProvider)} er blandt de billigste</span> (spotpris + ${String(P.elMarkup).replace('.', ',')} øre, ${fmt(sub)} kr/md) og modregner ladeboksen automatisk.`}</p></div>`;
 }
@@ -2201,7 +2204,7 @@ function vSavings(){
   const b = B(), items = analyze(b), t = svTotals(items);
   const manual = Object.entries(S.sv.items).filter(([id]) => id.startsWith('manual:'));
   let h = `<h1>Besparelser</h1><p class="sub">Appen gennemgår budgettet automatisk og markerer prisstigninger, overlap og muligheder. Følg op ved at sætte status og notere hvad I har sparet.</p>
-  <div class="tiles" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+  <div class="tiles t3">
     ${tile('Åbne forslag', t.open, 'til gennemgang')}
     ${tile('Målbart potentiale', kr(t.pot), 'pr. år · kun forslag med beløb')}
     ${tile('Realiseret', `<span data-sv="real">${kr(t.real)}</span>`, 'pr. år · fra gennemførte')}
@@ -2289,7 +2292,7 @@ function vInsurance(){
   const best = {}; quotes.forEach(q => { if (q.status !== 'afvist' && q.monthly !== 'nej' && (!best[q.lineId] || qYear(q) < qYear(best[q.lineId]))) best[q.lineId] = q; });
   let potential = 0; L.forEach(({l}) => { const q = best[l.id]; if (q){ const d = insPrice(l).now - q.yearly; if (d > 0 && q.status !== 'valgt') potential += d; } });
   let h = `<h1>Forsikringer</h1><p class="sub">Overblik over policer, indhent tilbud og sammenlign. Udfyld selskab og hovedforfald, så ved I hvornår I kan skifte.</p>` + reviewCard() + `
-  <div class="tiles" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+  <div class="tiles t3">
     ${tile('Forsikringer i ' + esc(S.year), kr(tot), L.length + ' policer')}
     ${tile(L.some(x => insPrice(x.l).next) ? 'Ny årspris' + (L.map(x => insPrice(x.l).next).find(Boolean)?.year ? ' ' + L.map(x => insPrice(x.l).next).find(Boolean).year : '') : 'Årspris efter seneste stigning', kr(totNow), (totNow - tot >= 0 ? '+' : '') + kr(totNow - tot) + ' vs. budget')}
     ${tile('Mulig besparelse fra tilbud', kr(potential), quotes.length + ' tilbud registreret')}
